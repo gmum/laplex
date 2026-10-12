@@ -1,0 +1,26 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <list>
+          <option value="fire" />
+          <option value="h5py" />
+          <option value="ipdb" />
+          <option value="jupyter" />
+          <option value="jupyterlab-vim" />
+          <option value="matplotlib" />
+          <option value="nbstripout" />
+          <option value="numpy" />
+          <option value="opencv-python-headless" />
+          <option value="pandas" />
+          <option value="pip" />
+          <option value="timm" />
+          <option value="torch" />
+          <option value="torchvision" />
+          <option value="tqdm" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
