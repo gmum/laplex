@@ -1,5 +1,5 @@
 """
-density_models.py  (App. I.2 and App. L: the covariance models of Tabs. 9 and 14)
+density_models.py  (App. L: the covariance models of Tab. 15)
 =================
 A downstream task and stronger structured covariance baselines for the density
 model of Sec. 4.2:
@@ -27,7 +27,7 @@ Kronecker LL/MAP use per-axis eigendecompositions (exact, cheap).
 
 Run `python density_models.py` first (self-test): validates every model's LL (and MAP
 where it exists) against a brute-force dense Gaussian on a tiny problem (must print
-rel-errors ~1e-6 or better). Then table09_14_density.py runs the full experiment.
+rel-errors ~1e-6 or better). Then table15_density_downstream.py runs the full experiment.
 
 Comments in English (repo convention).
 """
@@ -49,7 +49,7 @@ import torch.nn.functional as F
 
 # laplex.py and prefix_suffix.py of ../benchmarks/comparison_experiments (the released operators)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "benchmarks", "comparison_experiments"))
+                                "..", "..", "benchmarks", "comparison_experiments"))
 import laplex  # exact LAPLEX CUDA kernels
 
 LOG2PI = math.log(2.0 * math.pi)
@@ -360,89 +360,6 @@ class CirculantModel:
 
 
 # =============================================================================
-# Budget-matched circulant family: "Circulant (K)" of Tab. 9
-# =============================================================================
-class CirculantMixModel(nn.Module):
-    """A single Gaussian whose precision factor is a product of K
-    (per-pixel diagonal x per-channel 2D circulant) stages:
-
-        z = L (x - m),   L = D_K C_K ... D_1 C_1,   Sigma = (L^T L)^{-1},
-
-    C_j = U^H diag(lambda_j) U is a symmetric positive-definite circulant with a
-    real, Hermitian-consistent spectrum stored on the rfft2 half-plane; D_j > 0
-    is diagonal.  K is a covariance-capacity knob (not mixture components):
-    each stage adds n + C*H*(W//2+1) parameters, which is how the baseline is
-    budget-matched to LAPLEX.  The mean is the frozen empirical mean.  The LL is
-    exact: log|det L| = sum_j (sum log D_j + sum over the full grid log lambda_j).
-    Stage 1 starts at the closed-form stationary whitening (lambda = psd^{-1/2}),
-    the others at identity, so training starts from the fitted FFT-circulant."""
-
-    def __init__(self, mean, dims, K, psd_init=None, dtype=torch.float64):
-        super().__init__()
-        C, H, W = dims
-        Wh = W // 2 + 1
-        self.dims, self.K = dims, K
-        self.register_buffer("mean", mean.to(dtype).clone())
-        self.log_D = nn.Parameter(torch.zeros(K, C, H, W, dtype=dtype))
-        log_lam = torch.zeros(K, C, H, Wh, dtype=dtype)
-        if psd_init is not None:
-            log_lam[0] = -0.5 * torch.log(psd_init[..., :Wh].to(dtype).cpu())
-        self.log_lam = nn.Parameter(log_lam)
-        # self-conjugate rfft columns (v = 0, and v = W/2 for even W) must be
-        # symmetric under u -> -u and appear once on the full grid; others twice
-        self.self_conj = [0] + ([W // 2] if W % 2 == 0 else [])
-        mult = torch.full((Wh,), 2.0, dtype=dtype)
-        mult[self.self_conj] = 1.0
-        self.register_buffer("mult", mult)
-        self.register_buffer("uflip", (-torch.arange(H)) % H)
-
-    def _log_spec(self):
-        c = self.self_conj
-        ls = self.log_lam.clone()
-        ls[..., c] = 0.5 * (self.log_lam[..., c] + self.log_lam[..., self.uflip, :][..., c])
-        return ls                                        # (K, C, H, Wh)
-
-    def whiten(self, R):  # R: (B, n) -> L R: (B, n)
-        C, H, W = self.dims
-        z = R.reshape(-1, C, H, W)
-        lam = torch.exp(self._log_spec())
-        D = torch.exp(self.log_D)
-        for j in range(self.K):
-            z = D[j] * torch.fft.irfft2(lam[j] * torch.fft.rfft2(z), s=(H, W))
-        return z.reshape(R.shape[0], -1)
-
-    def logdet_L(self):
-        return self.log_D.sum() + (self._log_spec() * self.mult).sum()
-
-    def loglik(self, X):
-        z = self.whiten(X - self.mean)
-        return -0.5 * (X.shape[1] * LOG2PI + (z * z).sum(1)) + self.logdet_L()
-
-
-# =============================================================================
-# Diagonal Gaussian: the independent-pixel floor
-# =============================================================================
-class DiagonalModel:
-    """Sigma = diag(var), closed form (empirical per-pixel mean and variance)."""
-
-    def __init__(self, X, eps=1e-6):
-        self.mean = X.mean(0)
-        self.var = X.var(0) + eps
-
-    def to(self, device):
-        self.mean = self.mean.to(device); self.var = self.var.to(device); return self
-
-    def loglik(self, X):
-        R = X - self.mean
-        quad = (R * R / self.var).sum(1)
-        return -0.5 * (X.shape[1] * LOG2PI + torch.log(self.var).sum() + quad)
-
-    @torch.no_grad()
-    def map_denoise(self, Y, s2):
-        return self.mean + (Y - self.mean) * (self.var / (self.var + s2))
-
-
-# =============================================================================
 # Self-test: FA (laplex/dense), PPCA, Kronecker, Circulant vs dense Gaussian
 # =============================================================================
 def _dense_gaussian_ll(X, mean, Sigma):
@@ -533,33 +450,9 @@ def run_selftest(device):
     e_mp = (cm.map_denoise(X, 0.3) - _dense_map(X, cm.mean, Sigc, 0.3)).abs().max().item() \
         / _dense_map(X, cm.mean, Sigc, 0.3).abs().max().item()
     print(f"Circulant    LL rel-err {e_ll:.2e} | MAP rel-err {e_mp:.2e}")
-
-    # ---- Circulant mix: dense L from the whitening map, even and odd W ----
-    for dims_m in ((2, 4, 5), (1, 5, 8)):                # n = 40, matches X
-        cmx = CirculantMixModel(X.mean(0), dims_m, K=3).to(device)
-        with torch.no_grad():
-            cmx.log_D.normal_(0, 0.3); cmx.log_lam.normal_(0, 0.5)
-            Lmat = cmx.whiten(torch.eye(n, dtype=dt, device=device)).T   # columns = L e_i
-            Sigm = torch.linalg.inv(Lmat.T @ Lmat)
-            e_ll = (cmx.loglik(X) - _dense_gaussian_ll(X, cmx.mean, Sigm)).abs().max().item() \
-                / _dense_gaussian_ll(X, cmx.mean, Sigm).abs().max().item()
-            # each circulant stage must be a symmetric operator (real spectrum)
-            cmx.log_D.zero_()
-            C1 = cmx.whiten(torch.eye(n, dtype=dt, device=device)).T
-            e_sym = (C1 - C1.T).abs().max().item() / C1.abs().max().item()
-        print(f"CircMix{dims_m} LL rel-err {e_ll:.2e} | circulant asym {e_sym:.2e}")
-
-    # ---- Diagonal ----
-    dg = DiagonalModel(Xc_data)
-    Sigd = torch.diag(dg.var)
-    e_ll = (dg.loglik(X) - _dense_gaussian_ll(X, dg.mean, Sigd)).abs().max().item() \
-        / _dense_gaussian_ll(X, dg.mean, Sigd).abs().max().item()
-    e_mp = (dg.map_denoise(X, 0.3) - _dense_map(X, dg.mean, Sigd, 0.3)).abs().max().item() \
-        / _dense_map(X, dg.mean, Sigd, 0.3).abs().max().item()
-    print(f"Diagonal     LL rel-err {e_ll:.2e} | MAP rel-err {e_mp:.2e}")
     print("-" * 50 + "\nIf all rel-errors are small, the math is correct.")
 
 
 if __name__ == "__main__":
-    # The full experiment is run by table09_14_density.py.
+    # The full experiment is run by table15_density_downstream.py.
     run_selftest(torch.device("cuda" if torch.cuda.is_available() else "cpu"))

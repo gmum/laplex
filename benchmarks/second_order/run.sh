@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIF="bash $HERE/../sif.sh"
 PY="python3 -u second_order"
 
-$SIF $PY/fig22_table13_second_order.py --mode correctness                  # max. rel. error vs dense (text)
-$SIF $PY/fig22_table13_second_order.py --mode convergence --n 512 --k 50000 # Fig. 22 left
-$SIF $PY/fig22_table13_second_order.py --mode scaling --k_max_exp 25        # Fig. 22 right, Tab. 13
-$SIF $PY/table10_12_second_order.py --n 512 --k 50000 --seeds 0 1 2         # Tabs. 10-12
+$SIF $PY/fig22_table14_second_order.py --mode correctness                  # max. rel. error vs dense (text)
+$SIF $PY/fig22_table14_second_order.py --mode convergence --n 512 --k 50000 # Fig. 22 left
+$SIF $PY/fig22_table14_second_order.py --mode scaling --k_max_exp 25        # Fig. 22 right, Tab. 14
+$SIF $PY/table11_13_second_order.py --n 512 --k 50000 --seeds 0 1 2         # Tabs. 11-13

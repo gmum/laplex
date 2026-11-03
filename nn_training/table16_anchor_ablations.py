@@ -1,5 +1,5 @@
 """
-table15_anchor_ablations.py  (App. M: Tab. 15)
+table16_anchor_ablations.py  (App. M: Tab. 16)
 ===========================
 Anchor initialization and number of kernel components for the *trainable* LAPLEX
 projection on ImageNet-10 (m = 500). Same task and model as
@@ -8,12 +8,12 @@ heads, optimiser, schedule and early stopping match it.
 
 Two modes (choose with --mode):
 
-  init_sweep  (Tab. 15, left)
+  init_sweep  (Tab. 16, left)
       Sweeps the anchor init distribution (normal / uniform / linspace), its scale,
       and the initial temperature tau, each over several seeds, and reports best
       accuracy mean +/- std.
 
-  components  (Tab. 15, right)
+  components  (Tab. 16, right)
       Sweeps the number of components I of a multi-component projection (sum of I
       independent Laplace kernels with per-component mixing weights) over several
       seeds; reports best accuracy and the mean anchor crossing rate per I.
@@ -22,11 +22,11 @@ The paper's runs use cached, non-augmented features (--features_on_gpu).
 
 Example
 -------
-    python table15_anchor_ablations.py --mode init_sweep \
+    python table16_anchor_ablations.py --mode init_sweep \
         --root_dataset data/imagenet10 --m 500 --epochs 30 \
         --seeds 1 2 3 4 5 --features_on_gpu
 
-    python table15_anchor_ablations.py --mode components \
+    python table16_anchor_ablations.py --mode components \
         --root_dataset data/imagenet10 --m 500 --epochs 30 --batch_size 128 \
         --components 1 2 3 4 --seeds 1 2 3 --features_on_gpu
 """
@@ -524,7 +524,7 @@ def build_cached_loaders(root, batch_size, num_workers, on_gpu=False):
 # Entry point
 # =============================================================================
 def get_params():
-    p = argparse.ArgumentParser("LAPLEX anchor ablations (App. M, Tab. 15)")
+    p = argparse.ArgumentParser("LAPLEX anchor ablations (App. M, Tab. 16)")
     p.add_argument(
         "--mode", required=True, choices=["init_sweep", "components"]
     )

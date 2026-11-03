@@ -23,7 +23,7 @@ The experiments are grouped by what LAPLEX is used for. Each directory has its o
 │   │   ├── _common.py, exp*.py, run.sh  # Original benchmark scripts
 │   ├── figNN_*.py, table03_*.py         # One script per figure / table of the camera-ready version
 │   ├── common.py, impls.py, plotting.py # Measurement protocol, implementations, figure style
-│   ├── second_order/                    # App. K: Fisher scoring with the exact LAPLEX curvature (Tabs. 10–13, Fig. 22)
+│   ├── second_order/                    # App. K: Fisher scoring with the exact LAPLEX curvature (Tabs. 11–14, Fig. 22)
 │   ├── impl_compare.py                  # All LAPLEX implementations in the Fig. 1 setting
 │   ├── last_interval_test.py            # Anchors beyond the ends of the sorted anchors (Thm. 1/4, Thm. 6)
 │   ├── vendor/                          # Further LAPLEX implementations (incl. the fused kernel of Fig. 1)
@@ -34,14 +34,14 @@ The experiments are grouped by what LAPLEX is used for. Each directory has its o
 │   ├── CountSketch_LogisticRegression/  # ImageNet-10: frozen projections + logistic regression, end-to-end LAPLEX vs dense
 │   ├── classification_heads/            # ImageNet-1k: LAPLEX vs low-rank classification heads on frozen Swin-T / MaxViT-T (Sec. 7)
 │   ├── crossing_trace.py, plot_crossing.py  # Anchor-crossing diagnostic with per-step traces (App. M, Fig. 23)
-│   ├── parity_stats.py                  # Statistics of a fresh 5-seed LAPLEX vs dense run (Table 1, App. G)
-│   ├── table15_anchor_ablations.py      # Anchor initialization and number of components (App. M, Tab. 15)
+│   ├── appG_trainable_stats.py          # Standard deviations and significance tests of Table 1 (App. G)
+│   ├── table16_anchor_ablations.py      # Anchor initialization and number of components (App. M, Tab. 16)
 │   ├── appJ_attention*.py               # LAPLEX as an attention operator (App. J)
-│   ├── run_appJ_table15.sh              # The sweeps of App. J and Tab. 15
+│   ├── run_appJ_table16.sh              # The sweeps of App. J and Tab. 16
 │   ├── make_imagenet10.py               # ImageNet-10 (or ImageNet-1k) as symlinks into a full ImageNet
 │   └── sif.sh, sbatch/                  # Singularity wrapper, Slurm jobs
 │
-├── log_likelihood/                      # Density models: structured covariance baselines (App. I.2 Tab. 9, App. L Tab. 14)
+├── log_likelihood/                      # Density models: LAPLEX and covariance baselines (Sec. 4.2, App. I, App. L)
 │
 └── environment/                         # Singularity definition, conda environment, pinned package versions
 ```
@@ -52,11 +52,11 @@ Benchmarks of the LAPLEX kernel operators themselves: LAPLEX against an explicit
 
 ### `nn_training/`
 
-LAPLEX as a compact, trainable layer. On ImageNet-10 it covers (i) frozen projections followed by logistic regression, comparing LAPLEX with PCA, Gaussian Random Projection and CountSketch, (ii) end-to-end training of a LAPLEX projection against a fully learnable dense projection, and (iii) the anchor-crossing diagnostic and a fresh-seed re-run of (ii). On ImageNet-1k, (iv) LAPLEX replaces the classification head of a frozen pretrained Swin-T / MaxViT-T and is compared with a low-rank head of the same size. It also contains (v) LAPLEX as a drop-in attention operator on MNIST / SVHN / CIFAR-10 (App. J) and (vi) the anchor-initialization and component ablations (App. M). Details in [nn_training/README.md](nn_training/README.md), [nn_training/CountSketch_LogisticRegression/README.md](nn_training/CountSketch_LogisticRegression/README.md) and [nn_training/classification_heads/README.md](nn_training/classification_heads/README.md).
+LAPLEX as a compact, trainable layer. On ImageNet-10 it covers (i) frozen projections followed by logistic regression, comparing LAPLEX with PCA, Gaussian Random Projection and CountSketch, (ii) end-to-end training of a LAPLEX projection against a fully learnable dense projection, and (iii) the anchor-crossing diagnostic. On ImageNet-1k, (iv) LAPLEX replaces the classification head of a frozen pretrained Swin-T / MaxViT-T and is compared with a low-rank head of the same size. It also contains (v) LAPLEX as a drop-in attention operator on MNIST / SVHN / CIFAR-10 (App. J) and (vi) the anchor-initialization and component ablations (App. M). Details in [nn_training/README.md](nn_training/README.md), [nn_training/CountSketch_LogisticRegression/README.md](nn_training/CountSketch_LogisticRegression/README.md) and [nn_training/classification_heads/README.md](nn_training/classification_heads/README.md).
 
 ### `log_likelihood/`
 
-Density modelling on ImageNette-320 and DIV2K-1024: LAPLEX factor analysis against dense low-rank, PPCA, Kronecker, FFT-circulant and budget-matched circulant covariances, in raster and permuted pixel order, with MAP denoising (App. I.2, App. L). The code of the main density experiments (Sec. 4.2, App. I.1) is not in this repository yet. Details in [log_likelihood/README.md](log_likelihood/README.md).
+Density modelling on ImageNette-320 and DIV2K-1024: the LAPLEX Gaussian (Sec. 4.2, App. I.1), block-circulant Gaussians and their mixtures in raster and permuted coordinates (App. I.2), and structured baselines with MAP denoising (App. L). Details in [log_likelihood/README.md](log_likelihood/README.md).
 
 ---
 
@@ -117,7 +117,7 @@ cd nn_training/CountSketch_LogisticRegression
 bash run_experiments.sh
 ```
 
-The anchor-crossing diagnostic and the fresh-seed re-run are described in [nn_training/README.md](nn_training/README.md).
+The anchor-crossing diagnostic is described in [nn_training/README.md](nn_training/README.md).
 
 **ImageNet-1k classification heads:**
 
@@ -130,13 +130,14 @@ python classification_heads/train/train_laplex_frozen.py   # and train_lora_froz
 
 Backbone, rank and seed are set in `classification_heads/configs/`; see [nn_training/classification_heads/README.md](nn_training/classification_heads/README.md).
 
-**Experiments added in the revision (App. J–M):**
+**Experiments of Sec. 4.2 and App. I–M:**
 
 ```bash
-cd benchmarks && bash second_order/run.sh                                  # App. K: Tabs. 10–13, Fig. 22
-cd nn_training && bash run_appJ_table15.sh anchor_init anchor_components   # App. M: Tab. 15
-cd nn_training && DOWNLOAD=1 bash run_appJ_table15.sh attention            # App. J
-cd log_likelihood && bash run.sh                                           # App. I.2 / L: Tabs. 9, 14
+cd benchmarks && bash second_order/run.sh                                  # App. K: Tabs. 11–14, Fig. 22
+cd nn_training && bash run_appJ_table16.sh anchor_init anchor_components   # App. M: Tab. 16
+cd nn_training && DOWNLOAD=1 bash run_appJ_table16.sh attention            # App. J
+cd log_likelihood && bash table09_10_circulant/run.sh                      # App. I.2: Tabs. 9, 10
+cd log_likelihood && bash table15_downstream/run.sh                        # App. L: Tab. 15
 ```
 
 See the README of each directory for data and caveats.

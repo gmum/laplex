@@ -1,10 +1,10 @@
 """
-table10_12_second_order.py  (App. K: Tabs. 10, 11, 12)
+table11_13_second_order.py  (App. K: Tabs. 11, 12, 13)
 ==========================
-Paper mapping: Table A -> Tab. 10, Table B -> Tab. 11, Table C -> Tab. 12.
+Paper mapping: Table A -> Tab. 11, Table B -> Tab. 12, Table C -> Tab. 13.
 
 Tables of the second-order-optimization experiment. Reuses the primitives of
-`fig22_table13_second_order.py` (exact LAPLEX Fisher/GGN curvature) and adds:
+`fig22_table14_second_order.py` (exact LAPLEX Fisher/GGN curvature) and adds:
 
   Table A  Quadratic convergence trace: per-iteration loss gap and gradient norm
            of Fisher scoring (exact LAPLEX curvature).
@@ -22,7 +22,7 @@ Tables of the second-order-optimization experiment. Reuses the primitives of
 All tables are printed as Markdown and saved to the output dir. CUDA, fp64.
 
 Usage:
-    python table10_12_second_order.py --n 512 --k 50000 --seeds 0 1 2
+    python table11_13_second_order.py --n 512 --k 50000 --seeds 0 1 2
 """
 
 import argparse
@@ -39,7 +39,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "comparison_experiments"))
 import laplex
-from fig22_table13_second_order import (
+from fig22_table14_second_order import (
     build_problem, loss_and_grad, fisher_curvature_laplex,
 )
 

@@ -5,7 +5,7 @@
 A pre-norm Transformer over pixel tokens in which only the attention sub-layer is
 swapped: Softmax, Performer RFF, RFF with a learnable temperature (RFF_tau) and
 LAPLEX (Structured, A_ij = exp(-|a_i - b_j| / tau), computed densely). One run per
-call; run_appJ_table15.sh runs the sweep of the paper and appJ_attention_table.py builds
+call; run_appJ_table16.sh runs the sweep of the paper and appJ_attention_table.py builds
 the table. torchvision datasets are read from --data_path (MNIST in it, CIFAR-10 in
 cifar10/, SVHN in SVHN/); --download fetches them.
 

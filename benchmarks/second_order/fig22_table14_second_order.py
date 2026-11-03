@@ -1,8 +1,8 @@
 """
-fig22_table13_second_order.py  (App. K: Fig. 22, Tab. 13; correctness claim in the text)
+fig22_table14_second_order.py  (App. K: Fig. 22, Tab. 14; correctness claim in the text)
 =============================
 Paper mapping: --mode correctness -> max. relative error vs dense in App. K;
---mode convergence -> Fig. 22 (left); --mode scaling -> Fig. 22 (right) and Tab. 13.
+--mode convergence -> Fig. 22 (left); --mode scaling -> Fig. 22 (right) and Tab. 14.
 
 Second-order optimization with an EXACT LAPLEX curvature. This directly exercises Theorem 2 — the exact weighted
 Gram M = A diag(D) A^T with A = LAPLEX(a, b) — *inside a real second-order
@@ -36,9 +36,9 @@ Comments in English (repo convention).
 
 Example
 -------
-    python fig22_table13_second_order.py --mode correctness
-    python fig22_table13_second_order.py --mode convergence --n 512 --k 50000
-    python fig22_table13_second_order.py --mode scaling --k_max_exp 25
+    python fig22_table14_second_order.py --mode correctness
+    python fig22_table14_second_order.py --mode convergence --n 512 --k 50000
+    python fig22_table14_second_order.py --mode scaling --k_max_exp 25
 """
 
 import argparse

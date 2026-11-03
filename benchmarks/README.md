@@ -35,7 +35,7 @@ Random Fourier Features (Figs. 1, 3, 5, 6, 8–18 and Tab. 3 of the paper).
 | `impl_compare.py` | all 10 LAPLEX implementations in the Fig. 1 setting (one process each): correctness check, timing, "which one is fastest at which n" (`dominance.md`) |
 | `last_interval_test.py` | anchors beyond the ends of the sorted a, against a float64 dense reference |
 | `comparison_experiments/` | the released operators and the original benchmark scripts |
-| `second_order/` | App. K (Tabs. 10–13, Fig. 22); `run.sh` runs all of it, results in `second_order/results/` |
+| `second_order/` | App. K (Tabs. 11–14, Fig. 22); `run.sh` runs all of it, results in `second_order/results/` |
 | `vendor/` | the other LAPLEX implementations, copied here; see [vendor/README.md](vendor/README.md) |
 | `run_all.sh` | runs the figure scripts one after another (never two benchmarks at once) |
 | `submit_max_n.sh` | one Slurm job per experiment up to the largest n (the camera-ready runs) |
@@ -62,13 +62,13 @@ Numbers and sections as in the camera-ready version.
 | Fig. 17 | App. E.3 | `fig17_cpu_fft.py` (CPU) | CPU runtime of LAPLEX (no CUDA), Toeplitz-FFT and one FFT |
 | Fig. 18 | App. F.2 | `fig18_rff_gradient.py` | RFF gradient accuracy, n = k = 2^16 |
 | Tab. 3 | App. D.1 | `table03_anchor_cost.py` | relative cost of anchor gradients, sorting and permutation |
-| Tabs. 10, 11, 12 | App. K | `second_order/table10_12_second_order.py` | Fisher scoring with the exact LAPLEX curvature (n = 512, k = 50,000, fp64): convergence trace, iterations and time to tolerance vs Adam / GD, rank-r Nyström curvature |
-| Fig. 22, Tab. 13 | App. K | `second_order/fig22_table13_second_order.py` | `--mode convergence`: Fisher scoring vs Adam (Fig. 22 left); `--mode scaling`: time and peak memory of one curvature build vs k, LAPLEX vs dense (Fig. 22 right, Tab. 13); `--mode correctness`: LAPLEX vs dense Fisher step |
+| Tabs. 11, 12, 13 | App. K | `second_order/table11_13_second_order.py` | Fisher scoring with the exact LAPLEX curvature (n = 512, k = 50,000, fp64): convergence trace, iterations and time to tolerance vs Adam / GD, rank-r Nyström curvature |
+| Fig. 22, Tab. 14 | App. K | `second_order/fig22_table14_second_order.py` | `--mode convergence`: Fisher scoring vs Adam (Fig. 22 left); `--mode scaling`: time and peak memory of one curvature build vs k, LAPLEX vs dense (Fig. 22 right, Tab. 14); `--mode correctness`: LAPLEX vs dense Fisher step |
 
 The App. K scripts are standalone: they write `.png`/`.json`/`.md` with their own
 plotting, not the paper's figure style, and they do not use the stopping rule above.
 The dense curvature is attempted at every k and recorded as OOM where it does not fit.
-Tab. 13 was measured on a 10 GB GPU.
+Tab. 14 was measured on a 10 GB GPU.
 
 The figure files are named after the paper: `fig03_08_square.py` writes
 `fig03.*` and `fig08.*`, `fig05_14_fft.py` writes `fig05.*` and `fig14.*`.

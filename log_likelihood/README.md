@@ -1,73 +1,73 @@
 # Log-likelihood (density models)
 
-Density-modelling experiments: Sec. 4.2 and Fig. 4 (DIV2K), App. I (ImageNette), App. L.
-This directory holds the code of the revision's density comparisons, App. I.2 (Tab. 9)
-and App. L (Tab. 14). The main experiments of Sec. 4.2 and App. I.1 (Fig. 4, Tab. 8,
-Figs. 20–21) are not in this repository yet.
+Gaussian density models on ImageNette-320 and DIV2K-1024. Test log-likelihood (LL) is in
+nats per image; bits/dim = −LL / (n ln 2), so lower bits/dim is better.
 
-| Script | Paper | What it does |
+| Directory | Paper | What it does |
 |---|---|---|
-| `density_models.py` | Tabs. 9, 14 | the Gaussian covariance models; `python density_models.py` checks every model's log-likelihood (and MAP where it exists) against a dense Gaussian on a tiny problem |
-| `table09_14_density.py` | Tab. 9, Tab. 14 | fits the models on ImageNette-320 or DIV2K-1024 in raster and/or permuted pixel order; test log-likelihood (nats, nats/dim, bits/dim) and, on ImageNette, MAP denoising (PSNR, SSIM) |
-| `run.sh` | Tabs. 9, 14 | self-test, then the rows of Tabs. 9 and 14 and the raster-order circulant values of App. I.2 |
+| [fig04_div2k/](fig04_div2k/) | Sec. 4.2, Fig. 4 | LAPLEX (width 1000) and dense low-rank (rank 4) Gaussians on DIV2K-1024; has its own [README](fig04_div2k/README.md) |
+| [table08_imagenette/](table08_imagenette/) | App. I.1, Tab. 8 | LAPLEX (I = 1) and dense low-rank Gaussians on ImageNette-320 |
+| [table09_10_circulant/](table09_10_circulant/) | App. I.2, Tabs. 9, 10 | block-circulant Gaussian (K = 1), mixtures (K = 5, K = 3) and the diagonal floor, in permuted and raster coordinates |
+| [table15_downstream/](table15_downstream/) | App. L, Tab. 15 | PPCA, dense low-rank, LAPLEX, FFT-circulant and Kronecker on raster-order ImageNette, with MAP denoising |
 
-Models (`density_models.py`), each a single Gaussian N(m, Σ):
-
-- **LAPLEX**: factor analysis Σ = F Fᵀ + diag(σ²), F = diag(w) A L with A = LAPLEX(a, b) ∈ R^{n×k}
-  and L ∈ R^{k×k} lower triangular, trained by maximum likelihood (Woodbury, Adam).
-- **dense-LR**: the same template with a free F ∈ R^{n×r}, r matched to the LAPLEX budget.
-- **PPCA**: closed form.
-- **Kronecker**: tensor-normal Σ = Σ_C ⊗ Σ_H ⊗ Σ_W, flip-flop MLE.
-- **FFT-circulant**: stationary covariance, closed form.
-- **circulant-K1, circulant-mix**: Σ⁻¹ = LᵀL with L = D_K C_K ⋯ D_1 C_1 (per-pixel diagonal times
-  per-channel FFT circulant). The mix uses K stages, chosen to match the LAPLEX parameter count.
-- **diagonal**: the floor.
-
-## Paper mapping and status
-
-- **Tab. 14:** the ImageNette rows in raster order (PPCA, dense-LR, LAPLEX, FFT-circulant,
-  Kronecker), with `--max_per_class 800` (8,000 training images) and 20 epochs.
-- **Tab. 9:**
-  - The circulant (K = 5 / K = 3 and K = 1) and diagonal rows are the permuted-order rows of
-    `circulant-mix`, `circulant-K1` and `diagonal`.
-  - The LAPLEX rows of Tab. 9 are the runs of App. I / Sec. 4.2. They are not produced here.
-- **App. I.2 text:** the raster-order circulant bits/dim (−3.51 ImageNette, −3.46 DIV2K) come
-  from `circulant-K1` / `circulant-mix` in raster order. The paper does not say which of the two.
-- **Reconstructed code.** The original scripts of the permuted-order comparison were not
-  recovered, so the circulant-mix model is a reconstruction. It matches the published
-  parameter counts exactly (K = 1: 0.46M / 4.72M, K = 5 ImageNette: 2.31M, K = 3 DIV2K:
-  14.2M), but new runs do not reproduce the published log-likelihoods digit for digit.
-- **Rank.** The dense-LR and PPCA rank is matched to the full LAPLEX count 4n + k + k² (rank 5
-  on ImageNette).
-- **MAP denoising** is available only for models with a closed-form posterior mean. The
-  circulant-K rows have log-likelihood only.
-
-The CUDA LAPLEX operators are imported from
-[../benchmarks/comparison_experiments/](../benchmarks/comparison_experiments/) (`laplex.py`,
-`prefix_suffix.py`); they are compiled on first import, so a CUDA GPU and `nvcc` are needed.
+`bash sif.sh <command>` runs a command in the Singularity image of the paper
+(`LAPLEX_SIF` selects another one) from this directory. All scripts need one CUDA GPU; the
+LAPLEX scan kernels are compiled with `nvcc` on first import.
 
 ## Data
 
-- **"ImageNette-320"** means the ten ImageNet synsets of ImageNet-10, resized to 320 × 320
-  (n = 307,200), not the fast.ai Imagenette. `--imagenet_root` takes the ImageNet-10 tree
-  built by [../nn_training/make_imagenet10.py](../nn_training/make_imagenet10.py) (default
-  `../nn_training/data/imagenet10`) or any root with `train/<synset>/`, `val/<synset>/`.
-- **DIV2K-1024:** shorter side resized to 1024 (bicubic), centre crop; n = 3,145,728.
-  `--div2k_root` must contain `DIV2K_train_HR/` and `DIV2K_valid_HR/`; the official 800 / 100
-  split is used.
-- `--ood_root <folder of images>` adds an OOD-detection AUROC on ImageNette (e.g. with
-  CelebA); it is not part of the paper.
+- **`imagenette2-320`** (fast.ai Imagenette, 9,469 train / 3,925 val, resized and centre-cropped
+  to 320 × 320, n = 307,200) for Tabs. 8–10. Set `IMAGENETTE_ROOT`.
+- **DIV2K** with `DIV2K_train_HR/` and `DIV2K_valid_HR/` (800 / 100, resized and cropped to
+  1024 × 1024, n = 3,145,728) for Fig. 4 and Tabs. 9, 10. Set `DIV2K_ROOT`.
+- **ImageNet-10** for Tab. 15: the ten ImageNet synsets, built by
+  [../nn_training/make_imagenet10.py](../nn_training/make_imagenet10.py), capped at 800 images
+  per class (8,000 training images), `--imagenet_root`.
 
-## Running
+## Sec. 4.2 and App. I.1
 
 ```bash
-cd log_likelihood
-bash sif.sh python density_models.py            # self-test
-bash run.sh                                     # Tabs. 9 and 14 (IMNET, DIV2K, OUT)
-bash sif.sh python table09_14_density.py --dataset imagenette --orders raster \
-    --max_per_class 800 --models LAPLEX dense-LR PPCA Kronecker FFT-circulant   # Tab. 14 only
+cd fig04_div2k
+python _run_div2k.py --complex --k 1000 --batch-size 8 --epochs 20 --div2k-root $DIV2K_ROOT
+python _run_div2k.py --dense --k-dense 4 --batch-size 8 --div2k-root $DIV2K_ROOT
+
+cd table08_imagenette
+python _run_imagenette320.py --complex --k 1000 --epochs 25      # I = 1, +198,549 nats
+python _run_imagenette320.py --dense --k-dense 6 --epochs 25     # dense low-rank
 ```
 
-`sif.sh` works as in [../nn_training/](../nn_training/README.md): it uses the Singularity
-image if it exists and binds `/shared/sets/datasets`; otherwise it runs in the current
-environment. Results: `results/density/<dataset>_<timestamp>/{results.json, tables.md}`.
+Results (progress log, samples, checkpoint) go to `results/` of each directory.
+
+Not in this repository: the I = 2, 3 LAPLEX variants, PPCA and the empirical-Gaussian
+reference of Tab. 8, MAP RMSE, Figs. 20–21, and the MAP panels of Fig. 4.
+
+## App. I.2
+
+```bash
+bash table09_10_circulant/run.sh                 # every row, about 7 h on an RTX 4090
+python table09_10_circulant/print_tables.py      # the rows of Tabs. 9 and 10
+python table09_10_circulant/test_bccb.py         # LL and sampler against a dense Gaussian
+```
+
+- **Model.** `_model_bccb.py`: one 3×3 Hermitian block per spatial frequency,
+  B = L Lᴴ + 10⁻⁴ I, 9 H (⌊W/2⌋ + 1) parameters, frozen empirical mean. A mixture has K such
+  covariances, one shared mean and learned weights, and starts from the trained K = 1 model of
+  the same coordinate order (`--warm-start`).
+- **Permutation.** `_perm_dataset.py`: one `torch.randperm(n)` with seed 0 over all n coordinates.
+  It is cached in the directory as `perm_n*_seed0.pt` and rebuilt from the seed when absent.
+- **Parameters.** The diagonal row of the tables counts the n variances; `_run_bccb.py` also
+  counts the frozen means in its result files (2n).
+- The LAPLEX rows of both tables are the raster-order runs of `table08_imagenette/` and
+  `fig04_div2k/`.
+
+## App. L
+
+```bash
+bash table15_downstream/run.sh
+```
+
+`density_models.py` holds the models, and `python density_models.py` checks every LL and MAP against
+a dense Gaussian on a tiny problem. `table15_density_downstream.py` fits them on raster-order
+ImageNet-10 and reports nats/dim and bits/dim, PSNR and SSIM. The CUDA LAPLEX operators come from
+[../benchmarks/comparison_experiments/](../benchmarks/comparison_experiments/). `--ood_root`
+adds an optional OOD-detection AUROC, which is not part of the paper.
