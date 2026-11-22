@@ -15,9 +15,11 @@
 # (status LIMIT) or the --max-log values below, which lie beyond both.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+# Partition / QOS / account for every job: SBATCH_* in ../.env (see ../.env.example).
+if [[ -f ../.env ]]; then set -a; source ../.env; set +a; fi
 mkdir -p logs
 unset SLURM_JOB_ID SLURM_JOBID SLURM_NODELIST SLURM_JOB_NODELIST
-GPU_RES=(--mem=64G --cpus-per-task=4)     # 6 jobs fit the per-user dgxh100 limits (6 GPU, 384G, 60 CPU)
+GPU_RES=(--mem=64G --cpus-per-task=4)     # smaller than sbatch/h100.sbatch, so that several jobs share a node
 
 # name | script | sbatch file | arguments
 JOBS=(

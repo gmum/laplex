@@ -7,145 +7,85 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2605.24584-b31b1b.svg)](https://arxiv.org/abs/2605.24584)
 [![NeurIPS 2026 poster](https://img.shields.io/badge/NeurIPS_2026-poster_page-68448c.svg)](https://neurips.cc/virtual/2026/loc/sydney/poster/155528)
 
-This repository contains the official implementation of **"LAPLEX: The FFT of Learnable Laplace Kernels"**, published at the *Conference on Neural Information Processing Systems (NeurIPS) 2026*.
+Official implementation of **"LAPLEX: The FFT of Learnable Laplace Kernels"** (NeurIPS 2026).
+LAPLEX applies a dense matrix with entries exp(−|aᵢ − bⱼ|), defined by learnable anchors on a
+line, exactly in O(n log n) time and O(n) memory, and differentiates through the anchors.
 
-## 📁 Repository Structure
+## Repository structure
 
-The experiments are grouped by what LAPLEX is used for. Each directory has its own README.
+The experiments are grouped by what LAPLEX is used for. Each directory has a README with the
+details, the data it needs and the commands for every figure and table.
 
-```
-.
-├── benchmarks/                          # Kernel operators: runtime, memory, accuracy; FFT and RFF comparisons
-│   ├── comparison_experiments/          # Released LAPLEX operators and the benchmark scripts of the submitted version
-│   │   ├── laplex.py                    # CUDA-accelerated LAPLEX operators (fp32/fp64)
-│   │   ├── laplex_phased.py             # Phased (single-tau) variant built on top of laplex.py
-│   │   ├── laplex_noCUDA.py             # Portable pure-PyTorch reference implementation (CPU / any backend)
-│   │   ├── prefix_suffix.py             # Custom CUDA prefix/suffix scan primitive (compiled on first import)
-│   │   ├── _common.py, exp*.py, run.sh  # Original benchmark scripts
-│   ├── figNN_*.py, table03_*.py         # One script per figure / table of the camera-ready version
-│   ├── common.py, impls.py, plotting.py # Measurement protocol, implementations, figure style
-│   ├── second_order/                    # App. K: Fisher scoring with the exact LAPLEX curvature (Tabs. 11–14, Fig. 22)
-│   ├── impl_compare.py                  # All LAPLEX implementations in the Fig. 1 setting
-│   ├── last_interval_test.py            # Anchors beyond the ends of the sorted anchors (Thm. 1/4, Thm. 6)
-│   ├── vendor/                          # Further LAPLEX implementations (incl. the fused kernel of Fig. 1)
-│   ├── run_all.sh, submit_max_n.sh      # Run every figure locally / as Slurm jobs
-│   └── sif.sh, sbatch/                  # Singularity wrapper, Slurm jobs
-│
-├── nn_training/                         # LAPLEX as a trainable layer
-│   ├── CountSketch_LogisticRegression/  # ImageNet-10: frozen projections + logistic regression, end-to-end LAPLEX vs dense
-│   ├── classification_heads/            # ImageNet-1k: LAPLEX vs low-rank classification heads on frozen Swin-T / MaxViT-T (Sec. 7)
-│   ├── crossing_trace.py, plot_crossing.py  # Anchor-crossing diagnostic with per-step traces (App. M, Fig. 23)
-│   ├── appG_trainable_stats.py          # Standard deviations and significance tests of Table 1 (App. G)
-│   ├── table16_anchor_ablations.py      # Anchor initialization and number of components (App. M, Tab. 16)
-│   ├── appJ_attention*.py               # LAPLEX as an attention operator (App. J)
-│   ├── run_appJ_table16.sh              # The sweeps of App. J and Tab. 16
-│   ├── make_imagenet10.py               # ImageNet-10 (or ImageNet-1k) as symlinks into a full ImageNet
-│   └── sif.sh, sbatch/                  # Singularity wrapper, Slurm jobs
-│
-├── log_likelihood/                      # Density models: LAPLEX and covariance baselines (Sec. 4.2, App. I, App. L)
-│
-└── environment/                         # Singularity definition, conda environment, pinned package versions
-```
+| directory | content |
+|---|---|
+| [benchmarks/](benchmarks/README.md) | the LAPLEX operators: runtime, memory and accuracy against dense kernels, Random Fourier Features and FFT / Toeplitz-FFT (Figs. 1, 3, 5, 6, 8–18, Tab. 3); second-order optimization with the exact curvature (App. K); the released operators in [comparison_experiments/](benchmarks/comparison_experiments/README.md) |
+| [nn_training/](nn_training/README.md) | LAPLEX as a trainable layer: ImageNet-10 projections ([CountSketch_LogisticRegression/](nn_training/CountSketch_LogisticRegression/README.md), Tab. 1), classification heads on frozen Swin-T / MaxViT-T ([classification_heads/](nn_training/classification_heads/README.md), Sec. 7), attention (App. J), anchor ablations and the anchor-crossing diagnostic (App. M) |
+| [log_likelihood/](log_likelihood/README.md) | Gaussian density models on DIV2K-1024 and ImageNette-320 (Sec. 4.2, App. I) and structured covariance baselines (App. L) |
+| [environment/](environment/) | container definition, conda environment and pinned package versions |
+| [.env.example](.env.example) | template of the machine-specific settings (container image, dataset paths, Slurm partition) |
 
-### `benchmarks/`
+## Installation
 
-Benchmarks of the LAPLEX kernel operators themselves: LAPLEX against an explicit dense kernel matrix (GPU time, peak memory, batch-size scaling, asymmetric kernels, weighted Gram matrices, CPU), against Random Fourier Features (value and gradient accuracy), and against FFT / Toeplitz-FFT (runtime and numerical accuracy on uniform grids). The `figNN_*.py` scripts produce the figures of the camera-ready version (Figs. 1, 3, 5, 6, 8–18, Tab. 3); every method runs until it no longer fits in device memory. `second_order/` uses the exact weighted Gram as the curvature of a second-order optimizer (App. K). Details in [benchmarks/README.md](benchmarks/README.md); the original scripts are described in [benchmarks/comparison_experiments/README.md](benchmarks/comparison_experiments/README.md).
+[`environment/`](environment/) describes the software of the paper's runs in two forms with
+the same Python packages ([requirements.txt](environment/requirements.txt): Python 3.14.6,
+PyTorch 2.13.0, NumPy 2.4.4, SciPy 1.18.0, ...); they differ in the CUDA version.
 
-### `nn_training/`
-
-LAPLEX as a compact, trainable layer. On ImageNet-10 it covers (i) frozen projections followed by logistic regression, comparing LAPLEX with PCA, Gaussian Random Projection and CountSketch, (ii) end-to-end training of a LAPLEX projection against a fully learnable dense projection, and (iii) the anchor-crossing diagnostic. On ImageNet-1k, (iv) LAPLEX replaces the classification head of a frozen pretrained Swin-T / MaxViT-T and is compared with a low-rank head of the same size. It also contains (v) LAPLEX as a drop-in attention operator on MNIST / SVHN / CIFAR-10 (App. J) and (vi) the anchor-initialization and component ablations (App. M). Details in [nn_training/README.md](nn_training/README.md), [nn_training/CountSketch_LogisticRegression/README.md](nn_training/CountSketch_LogisticRegression/README.md) and [nn_training/classification_heads/README.md](nn_training/classification_heads/README.md).
-
-### `log_likelihood/`
-
-Density modelling on ImageNette-320 and DIV2K-1024: the LAPLEX Gaussian (Sec. 4.2, App. I.1), block-circulant Gaussians and their mixtures in raster and permuted coordinates (App. I.2), and structured baselines with MAP denoising (App. L). Details in [log_likelihood/README.md](log_likelihood/README.md).
-
----
-
-## ⚙️ Installation
-
-[`environment/`](environment/) describes the software of the paper's runs in two forms. Both install the same Python packages at the same versions ([requirements.txt](environment/requirements.txt): Python 3.14.6, PyTorch 2.13.0, NumPy 2.4.4, SciPy 1.18.0, ...); they differ in the CUDA version.
-
-**Singularity / Apptainer: the paper's environment.** [laplex.def](environment/laplex.def) rebuilds, with the same versions, the part of the image used for the paper's runs that this repository needs: Ubuntu 24.04, CUDA 13.2 with `nvcc` and gcc 13, TeX Live, and the packages above with PyTorch for CUDA 13.2. CUDA 13 needs an NVIDIA driver ≥ 580.
+**Apptainer / Singularity (the paper's environment).** [laplex.def](environment/laplex.def)
+rebuilds Ubuntu 24.04, CUDA 13.2 with `nvcc` and gcc 13, TeX Live and the packages above
+(NVIDIA driver ≥ 580):
 
 ```bash
 cd environment
 apptainer build laplex.sif laplex.def      # or: singularity build --fakeroot laplex.sif laplex.def
-export LAPLEX_SIF=$PWD/laplex.sif
 ```
 
-Building needs root, `--fakeroot` (an entry for your user in `/etc/subuid`), or Apptainer with unprivileged user namespaces; on a cluster without these, build on a workstation and copy the `.sif`. The `sif.sh` wrappers in `benchmarks/` and `nn_training/` run every command in the image named by `LAPLEX_SIF`, e.g. `bash sif.sh python fig03_08_square.py --quick`.
+Building needs root, `--fakeroot` or unprivileged user namespaces; otherwise build on a
+workstation and copy the `.sif`.
 
-**Conda.** [environment.yml](environment/environment.yml) installs the same packages with PyTorch built for CUDA 12.6 (NVIDIA driver ≥ 525), plus `nvcc` and gcc from conda-forge for the CUDA kernels:
+**Conda.** [environment.yml](environment/environment.yml) installs the same packages with
+PyTorch for CUDA 12.6 (driver ≥ 525), plus `nvcc` and gcc for the CUDA kernels. For RTX 50xx
+GPUs replace `cu126` by `cu130` and the `12.6` CUDA packages by `13.0`.
 
 ```bash
 conda env create -f environment/environment.yml
 conda activate laplex
 ```
 
-For RTX 50xx GPUs, which need CUDA 13, replace `cu126` by `cu130` and `cuda-nvcc=12.6`, `cuda-cudart-dev=12.6` by `13.0` in `environment.yml` (driver ≥ 580). The `sif.sh` wrappers run commands in the active environment when no image is found.
+The custom CUDA kernels are compiled on first import (30 s to a few minutes per
+implementation) and cached in `.cache/`. With `pdflatex`, the benchmark figures are typeset
+with the paper's fonts; without it, an approximate PDF and a PNG are written.
 
-The GPU benchmarks compile custom CUDA kernels with `torch.utils.cpp_extension.load_inline` on first import, from 30 seconds to a few minutes per implementation; the result is cached in `benchmarks/.cache/`. The CPU benchmarks and everything in `nn_training/` do not need the CUDA toolchain; `benchmarks/second_order/` and `log_likelihood/` use the CUDA operators of `benchmarks/comparison_experiments/`.
+## Configuration
 
-**LaTeX (optional, included in the image).** With `pdflatex`, `pgf` and the Times/Helvetica fonts (e.g. Ubuntu: `apt install texlive-latex-extra texlive-fonts-recommended cm-super`), the figures of `benchmarks/` are typeset with the paper's fonts (`.pgf` / `.pdf`); without it, an approximate `.pdf` and a `.png` are written.
-
----
-
-## 🚀 Running Experiments
-
-**Kernel benchmarks (camera-ready figures):**
+Machine-specific settings live in `.env` (not tracked): copy the template and fill in what
+applies to your machine.
 
 ```bash
-cd benchmarks
-bash sif.sh python fig03_08_square.py --quick   # one figure, development preset
-bash run_all.sh                                 # every figure, one after another
+cp .env.example .env
 ```
 
-**Original benchmark scripts:**
+- `LAPLEX_SIF`: the image built above. The `sif.sh` wrappers in `benchmarks/`, `nn_training/`
+  and `log_likelihood/` run every command in it (`bash sif.sh python ...`), with the GPU and
+  the dataset directories of `.env` visible inside. Without it, they use the current Python
+  environment (e.g. the conda environment).
+- Dataset paths: `IMAGENET_ROOT` and `IMAGENET_VAL_CSV` (to build ImageNet-10),
+  `IMNET`, `DATA_ROOT` / `VAL_ROOT`, `TV_DATA`, `DIV2K_ROOT`, `IMAGENETTE_ROOT`. Which
+  experiment needs which is given in the directory READMEs.
+- Slurm: the sbatch files request only resources (GPU, CPUs, memory, time). Set
+  `SBATCH_PARTITION`, `SBATCH_QOS` and `SBATCH_ACCOUNT` for your cluster and export them
+  before submitting (`set -a; source .env; set +a`), or pass `sbatch -p <partition> ...`.
+
+## Quick start
 
 ```bash
-cd benchmarks/comparison_experiments
-bash run.sh
+cd benchmarks && bash sif.sh python fig03_08_square.py --quick    # one benchmark figure, development preset
+cd benchmarks && bash run_all.sh                                   # every benchmark figure
+cd nn_training && python3 make_imagenet10.py                       # ImageNet-10 from IMAGENET_ROOT
+cd nn_training/CountSketch_LogisticRegression && bash run_experiments.sh   # Tab. 1
+cd log_likelihood && bash table15_downstream/run.sh                # App. L, Tab. 15
 ```
 
-Before running, set `TORCH_CUDA_ARCH_LIST` in `run.sh` to match your GPU (e.g. `"8.9"` for RTX 4090, `"9.0"` for H100). Individual experiments can also be run directly, e.g. `python exp1_gpu_time_memory.py`.
-
-**ImageNet-10 experiments:**
-
-Prepare the ImageNet-10 subset with the `train/` and `val/` layout described in [imagenet10_dataset.py](nn_training/CountSketch_LogisticRegression/imagenet10_dataset.py) (or build it from a full ImageNet with [make_imagenet10.py](nn_training/make_imagenet10.py)), replace `path_to_ImageNet` in `run_experiments.sh` with its location, and run:
-
-```bash
-cd nn_training/CountSketch_LogisticRegression
-bash run_experiments.sh
-```
-
-The anchor-crossing diagnostic is described in [nn_training/README.md](nn_training/README.md).
-
-**ImageNet-1k classification heads:**
-
-```bash
-cd nn_training
-python3 make_imagenet10.py --all-classes --src <ImageNet>/CLS-LOC --val-csv <ImageNet>/LOC_val_solution.csv
-export DATA_ROOT=$PWD/data/imagenet VAL_ROOT=$PWD/data/imagenet/val
-python classification_heads/train/train_laplex_frozen.py   # and train_lora_frozen.py
-```
-
-Backbone, rank and seed are set in `classification_heads/configs/`; see [nn_training/classification_heads/README.md](nn_training/classification_heads/README.md).
-
-**Experiments of Sec. 4.2 and App. I–M:**
-
-```bash
-cd benchmarks && bash second_order/run.sh                                  # App. K: Tabs. 11–14, Fig. 22
-cd nn_training && bash run_appJ_table16.sh anchor_init anchor_components   # App. M: Tab. 16
-cd nn_training && DOWNLOAD=1 bash run_appJ_table16.sh attention            # App. J
-cd log_likelihood && bash table09_10_circulant/run.sh                      # App. I.2: Tabs. 9, 10
-cd log_likelihood && bash table15_downstream/run.sh                        # App. L: Tab. 15
-```
-
-See the README of each directory for data and caveats.
-
----
-
-## 📚 Citation
+## Citation
 
 If you find this work useful, please cite our NeurIPS 2026 paper:
 

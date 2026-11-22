@@ -1,21 +1,21 @@
-"""prefix_suffix_dl_fp64.py — fp64 wariant DL-scan CUDA extension.
+"""prefix_suffix_dl_fp64.py — fp64 variant of the DL-scan CUDA extension.
 
-Kopia `prefix_suffix_dl.py` z float → double.  Używamy gdy fp32 precision
-nie wystarcza (np. complex-kernel model z signed-D cancellation).
+Copy of `prefix_suffix_dl.py` with float → double.  Used when fp32 precision
+is not enough (e.g. the complex-kernel model with signed-D cancellation).
 
-Zmiany vs fp32:
+Changes vs fp32:
   - struct Pair: float x → double x
   - ldexpf/expf → ldexp/exp
-  - float4 vec load → scalar x4 (nvcc coalesce-uje; LD.128 == 2×LD.64)
+  - float4 vec load → scalar x4 (nvcc coalesces them; LD.128 == 2×LD.64)
   - state buffers: float → double
   - torch::kFloat32 → torch::kFloat64
 
-Warp shuffle w CUDA natywnie obsługuje `double` (__shfl_up_sync z double
-parametrem, sm_30+).  `volatile double*` loads są atomowe dla wyrównanych
-64-bitowych dostępów (Pascal+).
+Warp shuffles in CUDA support `double` natively (__shfl_up_sync with a double
+argument, sm_30+).  `volatile double*` loads are atomic for aligned
+64-bit accesses (Pascal+).
 
-Performance: ~2× wolniej od fp32 (wymiar danych 2× większy), ale stabilne
-dla single-tau scan-Gramu z signed-D weights.
+Performance: ~2x slower than fp32 (twice the data size), but stable
+for the single-tau scan Gram with signed-D weights.
 """
 
 import os, sys, math, time
@@ -24,14 +24,6 @@ from torch.autograd import Function
 from torch.utils.cpp_extension import load_inline
 
 _LOG2E = math.log2(math.e)
-
-_CUDA_121 = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_121):
-    os.environ["CUDA_HOME"] = _CUDA_121
-    os.environ["CUDA_PATH"] = _CUDA_121
-    os.environ["PATH"] = os.path.join(_CUDA_121, "bin") + ";" + os.environ.get("PATH", "")
-    import torch.utils.cpp_extension as _cext
-    _cext.CUDA_HOME = _CUDA_121
 
 _NVCC_FLAGS = [
     "-O3", "--use_fast_math",
@@ -339,7 +331,7 @@ _PAD_TO  = _THREADS * 4   # 1024
 
 
 def _precompute(alpha: torch.Tensor):
-    """α → (ef, n_fwd, ef_neg, n_bwd) z rozkładem na mantysę fp64 i int32 exponent."""
+    """α → (ef, n_fwd, ef_neg, n_bwd), split into an fp64 mantissa and an int32 exponent."""
     ap  =  alpha.double() * _LOG2E
     n_f = ap.floor().to(torch.int32)
     ef  = torch.exp2(ap - n_f.double())
@@ -419,7 +411,7 @@ class _PrefSuffDiffFn(Function):
 
 
 def prefix_suffix_sep(alpha, u, v=None):
-    """Zwraca (prefix(α,u), suffix(α,v)), fp64 internal."""
+    """Returns (prefix(α,u), suffix(α,v)), fp64 internally."""
     if v is None:
         v = u
     squeeze = u.dim() == 1

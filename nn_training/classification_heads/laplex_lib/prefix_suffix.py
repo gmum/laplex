@@ -59,17 +59,6 @@ from torch.utils.cpp_extension import load_inline
 
 _LOG2E = math.log2(math.e)   # 1 / ln(2)
 
-# ---------------------------------------------------------------------------
-# CUDA toolchain — Windows often needs CUDA_HOME pointed at v12.x explicitly.
-# ---------------------------------------------------------------------------
-_CUDA_121 = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_121):
-    os.environ["CUDA_HOME"] = _CUDA_121
-    os.environ["CUDA_PATH"] = _CUDA_121
-    os.environ["PATH"] = os.path.join(_CUDA_121, "bin") + ";" + os.environ.get("PATH", "")
-    import torch.utils.cpp_extension as _cext
-    _cext.CUDA_HOME = _CUDA_121
-
 _NVCC_FLAGS = [
     "-O3",
     "--use_fast_math",

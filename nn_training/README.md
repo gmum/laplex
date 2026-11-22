@@ -28,19 +28,19 @@ The environment of the main [README](../README.md) (an image built from
 [../environment/laplex.def](../environment/laplex.def) or the conda environment;
 `torch`, `torchvision`, `numpy`, `pandas`, `scikit-learn`, `matplotlib`, and `scipy` for
 `appG_trainable_stats.py`). No CUDA toolchain is needed: the trainable layer materialises K
-densely. `sif.sh` runs a command in the Singularity image of `../benchmarks/sif.sh`
-(`LAPLEX_SIF` selects another one) and binds `/shared/sets/datasets` when it exists;
-without an image it runs the command in the current environment.
+densely. `sif.sh` runs a command in the container image named by `LAPLEX_SIF` in
+`../.env` (see [../.env.example](../.env.example)) and binds the dataset directories set
+there; without an image it runs the command in the current environment.
 
 ## Data: ImageNet-10
 
 `imagenet10_dataset.py` expects `root/{train,val}/<synset>/` and keeps the ten synsets
-of `IMAGENET10_SYNSETS`. The scripts here read `data/imagenet10`; either link an existing
-ImageNet-10 there, or build it from a full ImageNet (ILSVRC CLS-LOC layout, flat `val/`)
-with
+of `IMAGENET10_SYNSETS`. The scripts here read `IMNET` from `../.env` (default `data/imagenet10`); either point it
+at an existing ImageNet-10, or build one from a full ImageNet (ILSVRC CLS-LOC layout, flat
+`val/`) after setting `IMAGENET_ROOT` and `IMAGENET_VAL_CSV` in `../.env`:
 
 ```bash
-python3 make_imagenet10.py --src <ImageNet>/CLS-LOC --val-csv <ImageNet>/LOC_val_solution.csv
+python3 make_imagenet10.py          # or: --src <ImageNet>/CLS-LOC --val-csv <ImageNet>/LOC_val_solution.csv
 ```
 
 - train: links to the per-synset folders of `CLS-LOC/train`;
@@ -48,9 +48,7 @@ python3 make_imagenet10.py --src <ImageNet>/CLS-LOC --val-csv <ImageNet>/LOC_val
   `LOC_val_solution.csv`.
 
 The result is 12,711 training and 500 validation images at full resolution. The
-defaults of `--src` and `--val-csv` are the copies on the cluster used for the paper
-(`/shared/sets/datasets/...`), and the sbatch files run the script with them if
-`data/imagenet10` is missing. The docstring of `imagenet10_dataset.py` gives
+sbatch file runs the script if the ImageNet-10 directory is missing. The docstring of `imagenet10_dataset.py` gives
 n03994562 for "pinwheel", but the list the code uses has n03944341.
 
 ## Running
@@ -69,20 +67,14 @@ bash sif.sh python crossing_trace.py --fake-data 64 --fake-dim 3072 --batch-size
 
 ```bash
 bash run_appJ_table16.sh                                  # list the sections
-bash run_appJ_table16.sh anchor_init anchor_components    # Tab. 16, ImageNet-10 from data/imagenet10
+bash run_appJ_table16.sh anchor_init anchor_components    # Tab. 16, ImageNet-10 from IMNET
 DOWNLOAD=1 bash run_appJ_table16.sh attention             # App. J: 216 runs, then the table
 ```
 
 - **Attention data.** `appJ_attention.py` reads the torchvision datasets from `--data_path`
-  (`TV_DATA`, default `data/torchvision`): MNIST in `MNIST/`, CIFAR-10 in
+  (`TV_DATA` in `../.env`, default `data/torchvision`): MNIST in `MNIST/`, CIFAR-10 in
   `cifar10/cifar-10-batches-py/`, SVHN in `SVHN/`. `--download` (`DOWNLOAD=1`) fetches
-  them. On the paper's cluster, link them instead:
-  ```bash
-  mkdir -p data/torchvision && cd data/torchvision
-  ln -s /shared/sets/datasets/MNIST MNIST
-  ln -s /shared/sets/datasets/cifar10 cifar10
-  ln -s /shared/sets/datasets/svhn SVHN
-  ```
+  them; existing copies can be linked into that directory instead.
 - **Batch size.** In the paper's sweep, the six largest runs (Structured, att_dim 256,
   depth 8, SVHN and CIFAR-10) were completed with batch 32 instead of 128 on 10 GB GPUs.
   They are not batch-comparable with the rest of the grid. `run_appJ_table16.sh` runs them with
@@ -93,7 +85,9 @@ DOWNLOAD=1 bash run_appJ_table16.sh attention             # App. J: 216 runs, th
 ### Slurm
 
 Submit from this directory, because the log paths in the sbatch files are relative.
-The sbatch file names the partition of the cluster the paper's runs used (dgxa100); on another cluster pass your own, e.g. `-p <partition> -q <qos>`.
+The sbatch file requests only resources; set the partition, QOS and account with
+`SBATCH_PARTITION`, `SBATCH_QOS`, `SBATCH_ACCOUNT` in `../.env` (exported before submitting:
+`set -a; source ../.env; set +a`) or pass `-p <partition> -q <qos>`.
 
 ```bash
 sbatch sbatch/crossing.sbatch                 # 2 runs x 6 epochs; EPOCHS, SEEDS, VARIANTS configurable

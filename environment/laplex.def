@@ -2,14 +2,14 @@ Bootstrap: docker
 From: nvidia/cuda:13.2.1-devel-ubuntu24.04
 
 # The software of the paper's runs, limited to what this repository uses.  Versions are
-# those of the image the runs used (/shared/sets/singularity/python_image_2026-08-04.sif):
+# those of the container image the paper's runs used:
 # Ubuntu 24.04, CUDA 13.2 with nvcc and gcc 13.3, TeX Live 2023, Python 3.14.6,
 # torch 2.13.0+cu132, and requirements.txt.  Build from this directory (the %files source
 # is relative to it):
 #
 #   cd environment
 #   apptainer build laplex.sif laplex.def    # or: singularity build --fakeroot (or sudo)
-#   export LAPLEX_SIF=$PWD/laplex.sif        # used by benchmarks/sif.sh and nn_training/sif.sh
+#   then set LAPLEX_SIF=$PWD/laplex.sif in ../.env (read by the */sif.sh wrappers)
 #
 # CUDA 13 needs an NVIDIA driver >= 580 on the host (see nvidia-smi).  For an older
 # driver use environment.yml (CUDA 12.6) instead.

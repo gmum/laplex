@@ -4,6 +4,14 @@ This repository contains everything needed to reproduce the benchmark, accuracy,
 
 All scripts are self-contained, print benchmark tables to `stdout`, and automatically generate publication-ready `PDF`/`PNG` figures.
 
+```bash
+cd benchmarks/comparison_experiments
+bash run.sh                        # every experiment in turn
+python exp1_gpu_time_memory.py     # or a single one
+```
+
+Before running, set `TORCH_CUDA_ARCH_LIST` in `run.sh` to match your GPU (e.g. `"8.9"` for RTX 4090, `"9.0"` for H100).
+
 ---
 
 

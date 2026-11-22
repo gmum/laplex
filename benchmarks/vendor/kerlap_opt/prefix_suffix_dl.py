@@ -2,34 +2,34 @@
 prefix_suffix_dl.py
 ===================
 
-Rozniczkowalny CUDA primitive:
+Differentiable CUDA primitive:
 
     prefix_suffix(alpha, u, v)[b,i] = prefix(alpha, u)[b,i] + suffix(alpha, v)[b,i]
 
-gdzie:
+where:
     prefix(a, u)[b,i] = exp(-a[i]) * sum_{j<=i} exp(a[j]) * u[b,j]
     suffix(a, v)[b,i] = exp(+a[i]) * sum_{j>=i} exp(-a[j]) * v[b,j]
 
-Wymagania:
-    alpha : [T]     float32 niemalejace, CUDA
+Requirements:
+    alpha : [T]     float32 non-decreasing, CUDA
     u, v  : [B, T]  float32, CUDA
 
-IMPLEMENTACJA
+IMPLEMENTATION
 -------------
-Naiwnie: exp(a) overflowuje dla a > ~88 (float32). Zamiast tego trzymamy
-wartosci w reprezentacji (n, x) gdzie wartosc = x * 2^n, czyli mantysa x
-i osobny calkowity wykladnik n -> nie ma overflow. Scan wykonujemy
-algorytmem Decoupled-Lookback (Merrill & Garland 2016) w jednym przejsciu.
+Naively, exp(a) overflows for a > ~88 (float32). Instead, values are kept
+in the representation (n, x) with value = x * 2^n, i.e. a mantissa x
+and a separate integer exponent n -> no overflow. The scan uses the
+Decoupled-Lookback algorithm (Merrill & Garland 2016) in a single pass.
 
 FUSED KERNEL
 ------------
-Skanujemy wartosci pomnozone przez ef = exp2(frac(a*log2 e)); po
-zakonczeniu dzielimy wynik przez ef. Oba kroki (mnozenie na wejsciu,
-dzielenie na wyjsciu) robimy w rejestrach wewnatrz kernela, bez
-materializacji tymczasowego tensora (B, T) -> ~2*B*T mniej ruchu pamieci
-na pare skanow w porownaniu do wersji niefused.
+We scan the values multiplied by ef = exp2(frac(a*log2 e)); at the
+end the result is divided by ef. Both steps (multiplication on input,
+division on output) are done in registers inside the kernel, without
+materializing a temporary (B, T) tensor -> ~2*B*T less memory traffic
+per pair of scans compared with the non-fused version.
 
-GRADIENT (dla _PsFn / prefix_suffix)
+GRADIENT (for _PsFn / prefix_suffix)
     grad_u     = suffix(alpha, g)
     grad_v     = prefix(alpha, g)
     grad_alpha = (u*grad_u - v*grad_v + g*(suffix_fwd - prefix_fwd)).sum(dim=0)
@@ -41,20 +41,6 @@ from torch.autograd import Function
 from torch.utils.cpp_extension import load_inline
 
 _LOG2E = math.log2(math.e)  # 1/ln(2)
-
-# ============================================================
-# CUDA toolchain (Windows: wskaz CUDA 12.1, jesli jest)
-# ============================================================
-_CUDA_121 = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_121):
-    os.environ["CUDA_HOME"] = _CUDA_121
-    os.environ["CUDA_PATH"] = _CUDA_121
-    os.environ["PATH"] = (
-        os.path.join(_CUDA_121, "bin") + ";" + os.environ.get("PATH", "")
-    )
-    import torch.utils.cpp_extension as _cext
-
-    _cext.CUDA_HOME = _CUDA_121
 
 _NVCC_FLAGS = [
     "-O3",
@@ -71,16 +57,16 @@ _CUDA_SRC = r"""
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-// Para (n, x) reprezentujaca wartosc x * 2^n.  n - int, x - float32.
+// Pair (n, x) representing the value x * 2^n.  n - int, x - float32.
 struct Pair { int n; float x; };
 
-// Asocjacyjna kombinacja: laczy prefix (a) z nastepnym elementem (b).
-// Wynik ma wykladnik b.n; mantysy przesuwamy do wspolnego wykladnika.
+// Associative combine: joins the prefix (a) with the next element (b).
+// The result has exponent b.n; the mantissas are shifted to the common exponent.
 __device__ __forceinline__ Pair combine(Pair a, Pair b) {
     return {b.n, b.x + ldexpf(a.x, a.n - b.n)};
 }
 
-// Warp-scan po 32 watkach przez shfl_up.
+// Warp scan over 32 threads with shfl_up.
 __device__ __forceinline__ Pair warp_scan(Pair val) {
     for (int offset = 1; offset < 32; offset <<= 1) {
         Pair other;
@@ -92,19 +78,19 @@ __device__ __forceinline__ Pair warp_scan(Pair val) {
     return val;
 }
 
-// Decoupled-lookback flagi stanu kazdego kafelka.
-#define FLAG_UNAVAIL 0   // jeszcze nic nie policzone
-#define FLAG_LOCAL   1   // jest local_sum, nie ma jeszcze inclusive prefix
-#define FLAG_PREFIX  2   // jest inclusive prefix calego dotychczasowego prefiksu
+// Decoupled-lookback state flags of every tile.
+#define FLAG_UNAVAIL 0   // nothing computed yet
+#define FLAG_LOCAL   1   // local_sum available, inclusive prefix not yet
+#define FLAG_PREFIX  2   // inclusive prefix of everything so far available
 
 // -------------------------------------------------------------------
-// FORWARD scan (prefix): od lewej do prawej.
+// FORWARD scan (prefix): from left to right.
 //
-// Wejscie:  n [T]      - exponent floor(alpha*log2e), int32
-//           x [B,T]    - mantysa u
+// Input:   n [T]      - exponent floor(alpha*log2e), int32
+//           x [B,T]    - mantissa u
 //           ef [T]     - exp2(frac(alpha*log2e)), float32
-// Wyjscie:  out_y [B,T] - juz zdekodowane: prefix[b,i] = scan(x*ef)/ef
-// Stan DL:  state_*    - rezerwacje per (batch, tile)
+// Output:  out_y [B,T] - already decoded: prefix[b,i] = scan(x*ef)/ef
+// DL state: state_*    - one slot per (batch, tile)
 // -------------------------------------------------------------------
 __global__ void dl_scan_fwd_fused(
     const int*   __restrict__ n,
@@ -123,14 +109,14 @@ __global__ void dl_scan_fwd_fused(
     int tid  = tile * blockDim.x + threadIdx.x;
     int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
 
-    // Faza 0: vectorized load (4 elementy na watek) + fuzja: mantysa = x*ef.
+    // Phase 0: vectorized load (4 elements per thread) + fusion: mantissa = x*ef.
     int4   ni  = ((const int4*)n )[tid];
     float4 xi  = ((const float4*)x_b)[tid];
     float4 efi = ((const float4*)ef)[tid];
     Pair a0={ni.x, xi.x*efi.x}, a1={ni.y, xi.y*efi.y},
          a2={ni.z, xi.z*efi.z}, a3={ni.w, xi.w*efi.w};
 
-    // Faza 1: lokalny inclusive scan w obrebie watku, warpu i bloku.
+    // Phase 1: local inclusive scan within the thread, the warp and the block.
     a1=combine(a0,a1); a2=combine(a1,a2); a3=combine(a2,a3);
     Pair val = warp_scan(a3);
     Pair we; we.n=__shfl_up_sync(0xffffffff,val.n,1); we.x=__shfl_up_sync(0xffffffff,val.x,1);
@@ -145,8 +131,8 @@ __global__ void dl_scan_fwd_fused(
     __syncthreads();
     if (warp>0) { Pair off=shared[warp-1]; a0=combine(off,a0); a1=combine(off,a1); a2=combine(off,a2); a3=combine(off,a3); }
 
-    // Faza 2: decoupled lookback.  Ostatni watek publikuje local_sum,
-    // szuka wstecz do pierwszego kafelka z FLAG_PREFIX, agreguje.
+    // Phase 2: decoupled lookback.  The last thread publishes local_sum,
+    // looks back to the first tile with FLAG_PREFIX and aggregates.
     if (threadIdx.x==blockDim.x-1) {
         Pair local_sum=a3;
         state_ln[sid]=local_sum.n; state_lx[sid]=local_sum.x;
@@ -160,9 +146,9 @@ __global__ void dl_scan_fwd_fused(
             volatile float* vlx  =(volatile float*)state_lx  +batch*num_tiles;
             volatile int*   vpn  =(volatile int*)  state_pn  +batch*num_tiles;
             volatile float* vpx  =(volatile float*)state_px  +batch*num_tiles;
-            // Uwaga: {0,0} jest LEWA jedynka dla combine, ale NIE prawa -
-            // combine(p,{0,0}) przepelnia ldexpf gdy p.n duze.
-            // Rozwiazanie: pierwszy hit inicjalizuje agg, kolejne combine-uja.
+            // Note: {0,0} is a LEFT identity of combine, but NOT a right one -
+            // combine(p,{0,0}) overflows ldexpf when p.n is large.
+            // Fix: the first hit initializes agg, the following ones are combined.
             Pair agg; bool first=true; int look=tile-1;
             while (look>=0) {
                 int f; while ((f=vflag[look])==FLAG_UNAVAIL) {}
@@ -184,7 +170,7 @@ __global__ void dl_scan_fwd_fused(
     }
     __syncthreads();
 
-    // Faza 3: zastosuj prefix z poprzednich kafelkow i zdekoduj: /ef.
+    // Phase 3: apply the prefix of the previous tiles and decode: /ef.
     Pair exc=shared[32];
     a0=combine(exc,a0); a1=combine(exc,a1); a2=combine(exc,a2); a3=combine(exc,a3);
     int base=tid*4;
@@ -197,9 +183,9 @@ __global__ void dl_scan_fwd_fused(
 }
 
 // -------------------------------------------------------------------
-// BACKWARD scan (suffix): od prawej do lewej.  tid=0 obsluguje
-// najprawsza czworke (T-4..T-1), tile=0 = najbardziej prawy kafelek.
-// Zapisuje do oryginalnych pozycji (bez flip tensora).
+// BACKWARD scan (suffix): from right to left.  tid=0 handles the
+// rightmost quad (T-4..T-1), tile=0 = the rightmost tile.
+// Writes to the original positions (no flip of the tensor).
 // -------------------------------------------------------------------
 __global__ void dl_scan_bwd_fused(
     const int*   __restrict__ n,
@@ -217,10 +203,10 @@ __global__ void dl_scan_bwd_fused(
     extern __shared__ Pair shared[];
 
     int tid     = tile * blockDim.x + threadIdx.x;
-    int tid_rev = T4 - 1 - tid;         // prawdziwa pozycja w tensorze
+    int tid_rev = T4 - 1 - tid;         // actual position in the tensor
     int lane    = threadIdx.x & 31, warp = threadIdx.x >> 5;
 
-    // Ladujemy z odwroconej pozycji; wewnatrz czworki idziemy .w -> .x.
+    // Load from the reversed position; inside the quad go .w -> .x.
     int4   ni  = ((const int4*)n)[tid_rev];
     float4 xi  = ((const float4*)x_b)[tid_rev];
     float4 efi = ((const float4*)ef)[tid_rev];
@@ -278,7 +264,7 @@ __global__ void dl_scan_bwd_fused(
     Pair exc=shared[32];
     a0=combine(exc,a0); a1=combine(exc,a1); a2=combine(exc,a2); a3=combine(exc,a3);
     int base = tid_rev * 4;
-    // a3 -> pozycja base+0, a0 -> base+3.  efi.x ma ef dla base+0.
+    // a3 -> position base+0, a0 -> base+3.  efi.x holds ef of base+0.
     float4 yy;
     yy.x = a3.x / efi.x;
     yy.y = a2.x / efi.y;
@@ -288,8 +274,8 @@ __global__ void dl_scan_bwd_fused(
 }
 
 // -------------------------------------------------------------------
-// Launcher: odpala oba kernele i zwraca (prefix, suffix) [B,T].
-// Wymaga T % 1024 == 0 (padding po stronie Pythona).
+// Launcher: runs both kernels and returns (prefix, suffix) [B,T].
+// Requires T % 1024 == 0 (padding on the Python side).
 // -------------------------------------------------------------------
 std::vector<torch::Tensor> scan_ps_fused(
     torch::Tensor n_fwd, torch::Tensor ef_fwd, torch::Tensor x_fwd,
@@ -306,7 +292,7 @@ std::vector<torch::Tensor> scan_ps_fused(
     auto oi=torch::TensorOptions().dtype(torch::kInt32).device(x_fwd.device());
     auto of=torch::TensorOptions().dtype(torch::kFloat32).device(x_fwd.device());
     int smem=33*(int)sizeof(Pair);
-    dim3 grid(B, tiles);  // batch first -> lepsze schedulowanie dla duzego B
+    dim3 grid(B, tiles);  // batch first -> better scheduling for large B
 
     auto sf0=torch::zeros({ns},oi); auto ln0=torch::empty({ns},oi);
     auto lx0=torch::empty({ns},of); auto pn0=torch::empty({ns},oi); auto px0=torch::empty({ns},of);
@@ -329,10 +315,10 @@ std::vector<torch::Tensor> scan_ps_fused(
 }
 
 // -------------------------------------------------------------------
-// Fused redukcja grad_alpha (uzywana w backward _PrefSuffDiffFn).
+// Fused reduction of grad_alpha (used in the backward of _PrefSuffDiffFn).
 //   out[t] = sum_b { u[b,t]*sgp[b,t] - v[b,t]*pgs[b,t]
 //                  - gp[b,t]*P[b,t]  + gs[b,t]*S[b,t] }
-// Jedno przejscie przez pamiec, bez temp tensora (B, T).
+// One pass over memory, no temporary (B, T) tensor.
 // -------------------------------------------------------------------
 __global__ void grad_alpha_reduce_kernel(
     const float* __restrict__ u,
@@ -376,14 +362,14 @@ torch::Tensor grad_alpha_reduce(
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("scan_ps_fused", &scan_ps_fused,
-          "fused prefix+suffix DL scan (x*ef na wejsciu, /ef na wyjsciu, 1 pass)");
+          "fused prefix+suffix DL scan (x*ef on input, /ef on output, 1 pass)");
     m.def("grad_alpha_reduce", &grad_alpha_reduce,
           "fused grad_alpha reduction (1-pass)");
 }
 """
 
 # ============================================================
-# Kompilacja rozszerzenia
+# Building the extension
 # ============================================================
 print("Compiling prefix_suffix extension...", end=" ", flush=True)
 _ext = load_inline(
@@ -399,18 +385,18 @@ print("OK\n")
 # Python helpers
 # ============================================================
 _THREADS = 256
-_PAD_TO = _THREADS * 4  # 1024; kernel oczekuje T % 1024 == 0
+_PAD_TO = _THREADS * 4  # 1024; the kernel expects T % 1024 == 0
 
 
 def _precompute(alpha: torch.Tensor):
     """
-    Rozklad alpha na ef (mantysa <2) i n (calkowity wykladnik).
+    Splits alpha into ef (mantissa < 2) and n (integer exponent).
 
-    Zwraca:
-        ef     = exp2(frac( alpha * log2e))  [T]   do prefix
-        n_fwd  = floor(alpha * log2e)        [T]   int32, niemalejace
-        ef_neg = exp2(frac(-alpha * log2e))  [T]   do suffix
-        n_bwd  = floor(-alpha * log2e)       [T]   int32, nierosnace
+    Returns:
+        ef     = exp2(frac( alpha * log2e))  [T]   for the prefix
+        n_fwd  = floor(alpha * log2e)        [T]   int32, non-decreasing
+        ef_neg = exp2(frac(-alpha * log2e))  [T]   for the suffix
+        n_bwd  = floor(-alpha * log2e)       [T]   int32, non-increasing
     """
     ap = alpha.float() * _LOG2E
     n_f = ap.floor().to(torch.int32)
@@ -424,7 +410,7 @@ def _precompute(alpha: torch.Tensor):
 
 
 def _pad_pair(x: torch.Tensor, n1d: torch.Tensor):
-    """Pad x [B,T] i n1d [T] do wielokrotnosci 1024. Zwraca (x_p, n_p, T_orig)."""
+    """Pad x [B,T] and n1d [T] to a multiple of 1024. Returns (x_p, n_p, T_orig)."""
     T = x.size(1)
     rem = T % _PAD_TO
     if rem == 0:
@@ -436,7 +422,7 @@ def _pad_pair(x: torch.Tensor, n1d: torch.Tensor):
 
 
 def _pad_ef(ef: torch.Tensor, T: int):
-    """Pad ef [T] do wielokrotnosci 1024 (replikacja ostatniej wartosci)."""
+    """Pad ef [T] to a multiple of 1024 (repeating the last value)."""
     rem = T % _PAD_TO
     if rem == 0:
         return ef
@@ -446,9 +432,9 @@ def _pad_ef(ef: torch.Tensor, T: int):
 
 def _ps_raw(ef, n_fwd, ef_neg, n_bwd, u: torch.Tensor, v: torch.Tensor):
     """
-    Raw wywolanie fused kernela.  Wejscia (ef, n, u, v) musza byc z tego
-    samego precompute; zwraca gotowe (prefix [B,T], suffix [B,T]) - kernel
-    dekoduje przez /ef w ostatniej fazie.
+    Raw call of the fused kernel.  The inputs (ef, n, u, v) must come from the
+    same precompute; returns the final (prefix [B,T], suffix [B,T]) - the kernel
+    decodes with /ef in its last phase.
     """
     T = u.size(1)
     u_pad, n_f_pad, T_orig = _pad_pair(u, n_fwd)
@@ -472,7 +458,7 @@ def _ps_raw(ef, n_fwd, ef_neg, n_bwd, u: torch.Tensor, v: torch.Tensor):
 # ============================================================
 class _PsFn(Function):
     """
-    Forward : zwraca prefix(alpha,u) + suffix(alpha,v), [B, T].
+    Forward : returns prefix(alpha,u) + suffix(alpha,v), [B, T].
     Backward: grad_u = suffix(alpha, g),  grad_v = prefix(alpha, g),
               grad_alpha = (u*grad_u - v*grad_v
                             + g*(suffix_fwd - prefix_fwd)).sum(dim=0)
@@ -495,7 +481,7 @@ class _PsFn(Function):
         ef, n_fwd, ef_neg, n_bwd, u, v, prefix_r, suffix_r = ctx.saved_tensors
         od = ctx.orig_dtype
         g32 = g.float()
-        # Jeden _ps_raw liczy jednoczesnie prefix(a,g) i suffix(a,g).
+        # One _ps_raw computes prefix(a,g) and suffix(a,g) together.
         prefix_g, suffix_g = _ps_raw(ef, n_fwd, ef_neg, n_bwd, g32, g32)
 
         grad_u = suffix_g.to(od) if ctx.needs_input_grad[1] else None
@@ -513,7 +499,7 @@ class _PsFn(Function):
 
 
 # ============================================================
-# Publiczne API
+# Public API
 # ============================================================
 def prefix_suffix(
     alpha: torch.Tensor, u: torch.Tensor, v: torch.Tensor
@@ -521,21 +507,21 @@ def prefix_suffix(
     """
     prefix_suffix(alpha, u, v) = prefix(alpha, u) + suffix(alpha, v).
 
-    alpha : [T]    float32, niemalejace, CUDA
+    alpha : [T]    float32, non-decreasing, CUDA
     u, v  : [B, T] float32, CUDA
-    zwraca: [B, T] rozniczkowany tensor
+    returns: [B, T] differentiable tensor
     """
     return _PsFn.apply(alpha, u, v)
 
 
 # ============================================================
-# Autograd: prefix i suffix OSOBNO (dla roznych u, v)
+# Autograd: prefix and suffix SEPARATELY (for different u, v)
 #
-# Rozni sie od _PsFn tym, ze zwraca dwa tensory (nie sume) oraz uzywa
-# fused CUDA redukcji (grad_alpha_reduce) w backwardzie.
+# Differs from _PsFn in that it returns two tensors (not their sum) and uses
+# the fused CUDA reduction (grad_alpha_reduce) in the backward.
 # ============================================================
 class _PrefSuffDiffFn(Function):
-    """Zwraca (prefix(alpha, u), suffix(alpha, v)) jako dwa osobne tensory."""
+    """Returns (prefix(alpha, u), suffix(alpha, v)) as two separate tensors."""
 
     @staticmethod
     def forward(ctx, alpha, u, v):
@@ -556,7 +542,7 @@ class _PrefSuffDiffFn(Function):
         gP32 = gP.float()
         gS32 = gS.float()
 
-        # Jednym wywolaniem liczymy prefix(a, gS) oraz suffix(a, gP).
+        # One call computes prefix(a, gS) and suffix(a, gP).
         prefix_gS, suffix_gP = _ps_raw(ef, n_fwd, ef_neg, n_bwd, gS32, gP32)
 
         grad_u = suffix_gP.to(od) if ctx.needs_input_grad[1] else None
@@ -564,7 +550,7 @@ class _PrefSuffDiffFn(Function):
 
         grad_alpha = None
         if ctx.needs_input_grad[0]:
-            # Fused redukcja:
+            # Fused reduction:
             #   grad_alpha[t] = sum_b (u*suffix_gP - v*prefix_gS - gP*P + gS*S)[b,t]
             grad_alpha = _ext.grad_alpha_reduce(
                 u.contiguous(),
@@ -582,10 +568,10 @@ class _PrefSuffDiffFn(Function):
 
 def prefix_suffix_sep(alpha, u, v=None):
     """
-    Zwraca (prefix(alpha, u), suffix(alpha, v)).  Jesli v=None, v=u.
+    Returns (prefix(alpha, u), suffix(alpha, v)).  If v=None, v=u.
 
     alpha : [T]
-    u, v  : [B, T] lub [T]
+    u, v  : [B, T] or [T]
     """
     if v is None:
         v = u
@@ -601,12 +587,12 @@ def prefix_suffix_sep(alpha, u, v=None):
 
 
 # ============================================================
-# GatherCombine: fuzja "X[:, idx_l] * w_l + X[:, idx_r] * w_r"
+# GatherCombine: fusion of "X[:, idx_l] * w_l + X[:, idx_r] * w_r"
 #
-# Custom autograd zeby:
-#   - forward: jeden fused multiply-add bez materializacji posrednich tensorow
-#   - backward: jedna scatter_add na grad_P i jedna na grad_S
-#   - pominiecie policzenia grad_w jezeli niepotrzebne
+# Custom autograd so that:
+#   - forward: one fused multiply-add without intermediate tensors
+#   - backward: one scatter_add for grad_P and one for grad_S
+#   - grad_w is skipped when it is not needed
 # ============================================================
 class _GatherCombineFn(Function):
     """
@@ -655,7 +641,7 @@ class _GatherCombineFn(Function):
 
 
 # ============================================================
-# Naiwna referencja (do testow; overflowuje dla alpha > ~88)
+# Naive reference (for tests; overflows for alpha > ~88)
 # ============================================================
 def _naive_prefix(alpha, u):
     ea = torch.exp(alpha)
@@ -674,14 +660,14 @@ def _naive_prefix_suffix(alpha, u, v):
 
 
 # ============================================================
-# Testy poprawnosci
+# Correctness tests
 # ============================================================
 def run_correctness_tests() -> bool:
     device = "cuda"
     torch.manual_seed(42)
     passed = failed = 0
 
-    print("1. Poprawnosc prefix i suffix osobno (vs naiwne):")
+    print("1. Correctness of prefix and suffix separately (vs naive):")
     for B, T, alo, ahi in [
         (1, 256, 0, 5),
         (4, 1024, 0, 10),
@@ -708,7 +694,7 @@ def run_correctness_tests() -> bool:
         )
 
     print()
-    print("2. Gradient (torch.autograd.gradcheck w fp64):")
+    print("2. Gradient (torch.autograd.gradcheck in fp64):")
     for B, T in [(1, 8), (2, 12), (1, 24)]:
         a_d = torch.linspace(
             0, 3, T, dtype=torch.float64, device=device
@@ -732,7 +718,7 @@ def run_correctness_tests() -> bool:
         print(f"   {'PASS' if ok else 'FAIL'}  B={B}, T={T}")
 
     print()
-    print("3. Gradient vs autograd na naiwnej implementacji (float32):")
+    print("3. Gradient vs autograd of the naive implementation (float32):")
     print(f"   {'Config':30s}  {'err_u':>7s}  {'err_v':>7s}  {'err_a':>7s}")
     print("   " + "-" * 58)
     for B, T, alo, ahi, desc in [
@@ -763,7 +749,7 @@ def run_correctness_tests() -> bool:
         ev = re(v1.grad, v2.grad)
         ea = re(a1.grad, a2.grad)
         tol_uv = 1e-2
-        tol_a = max(2e-2, T * 1e-5)  # grad_a kumuluje wiecej bledu
+        tol_a = max(2e-2, T * 1e-5)  # grad_a accumulates more error
         ok = eu < tol_uv and ev < tol_uv and ea < tol_a
         passed += ok
         failed += not ok
@@ -771,10 +757,10 @@ def run_correctness_tests() -> bool:
             f"   {'PASS' if ok else 'FAIL'}  B={B:2d},T={T:6d},{desc:16s}  {eu:.1e}  {ev:.1e}  {ea:.1e}"
         )
 
-    print(f"\nWyniki: {passed} zaliczonych, {failed} niezaliczonych\n")
+    print(f"\nResults: {passed} passed, {failed} failed\n")
     return failed == 0
 
 
 if __name__ == "__main__":
-    print("=== TESTY POPRAWNOSCI ===\n")
+    print("=== CORRECTNESS TESTS ===\n")
     run_correctness_tests()

@@ -5,6 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE/.."
+if [[ -f "$HERE/../../.env" ]]; then set -a; source "$HERE/../../.env"; set +a; fi   # see ../../.env.example
 IMNET=${IMNET:-../nn_training/data/imagenet10}
 PY="bash sif.sh python3 -u"
 $PY table15_downstream/density_models.py                # self-test against a dense Gaussian

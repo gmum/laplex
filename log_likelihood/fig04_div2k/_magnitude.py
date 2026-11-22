@@ -80,8 +80,8 @@ class _TwoTauPrefSuffFn(torch.autograd.Function):
     def forward(ctx, alpha_L, alpha_R, u, v):
         aL32 = alpha_L.float(); aR32 = alpha_R.float()
         u32  = u.float();       v32  = v.float()
-        # Precompute obydwu alph w pelni (efL/nFL/efnL/nBL i efR/nFR/efnR/nBR)
-        # i zapisz wszystko dla backward — unika 2x przeliczenia precompute.
+        # Precompute both alphas in full (efL/nFL/efnL/nBL and efR/nFR/efnR/nBR)
+        # and save everything for backward — avoids computing the precompute twice.
         efL, n_fwd_L, ef_neg_L, n_bwd_L = _precompute_multi(aL32)
         efR, n_fwd_R, ef_neg_R, n_bwd_R = _precompute_multi(aR32)
         P, S = _scan_ps_run(efL, n_fwd_L, ef_neg_R, n_bwd_R, u32, v32)
@@ -110,10 +110,10 @@ class _TwoTauPrefSuffFn(torch.autograd.Function):
         need_aL = ctx.needs_input_grad[0]
         need_aR = ctx.needs_input_grad[1]
         if need_aL or need_aR:
-            # Fused CUDA: jeden pass po wszystkich 8 tensorach, zwraca obie
-            # redukcje grad_aL, grad_aR. Zastepuje 4 einsumy. Wszystkie
-            # inputy musza byc row-major contiguous [L,B,T] — P/S po scanie
-            # to slice po paddingu, wiec forsowane .contiguous().
+            # Fused CUDA: one pass over all 8 tensors, returns both
+            # reductions grad_aL, grad_aR. Replaces 4 einsums. All
+            # inputs must be row-major contiguous [L,B,T] — P/S after the scan
+            # are slices of the padded result, hence the forced .contiguous().
             gaL, gaR = _ext_multi.grad_alpha_two_tau_multi(
                 u32.contiguous(),        suffix_gP.contiguous(),
                 gP32,                    P.contiguous(),
@@ -134,10 +134,10 @@ def _two_tau_pref_suff(alpha_L, alpha_R, u, v):
 #
 #   y[l, b, j] = w_l[l, j] * P[l, b, c_l[l, j]] + w_r[l, j] * S[l, b, c_r[l, j]]
 #
-# Multi-L wariant `_GatherCombineFn` z kerlap_norm. Zapisuje P_sel/S_sel w
-# forward, w backward robi scatter_add bezposrednio (omija autograd-gather).
-# Zastepuje 4x torch.gather + mul + add w _magnitude_apply_scan_real jednym
-# Function z fused backwardem.
+# Multi-L variant of `_GatherCombineFn` from kerlap_norm. Saves P_sel/S_sel in
+# forward and does scatter_add directly in backward (bypasses autograd gather).
+# Replaces 4x torch.gather + mul + add in _magnitude_apply_scan_real with one
+# Function with a fused backward.
 # ----------------------------------------------------------------------------
 
 class _FusedGatherCombineMultiFn(torch.autograd.Function):

@@ -98,13 +98,13 @@ def laplex_complex_right(
 
     Returns (B, L, n_a) COMPLEX.
 
-    Realizacja (analog `laplex_right`):
-      - pre-demodulate X przez exp(-i d/s)  (b-side)
-      - apply magnitude kernel z zamienionymi anchorami i τ-ami:
+    Implementation (as in `laplex_right`):
+      - pre-demodulate X with exp(-i d/s)  (b side)
+      - apply the magnitude kernel with the anchors and τ's swapped:
             _magnitude_apply(X', b, a, tau_R, tau_L, normalize)
-      - post-modulate przez exp(i c/s)  (a-side)
-    Normalizacja działa jak w real `laplex_right`: Z[l,j] = Σ_k |K[l,k,j]|
-    (tylko magnituda, zawsze realna dodatnia) i skaluje X przed apply.
+      - post-modulate with exp(i c/s)  (a side)
+    The normalization works as in the real `laplex_right`: Z[l,j] = Σ_k |K[l,k,j]|
+    (magnitude only, always real and positive) and scales X before applying.
     """
     cdtype    = torch.complex64 if X.dtype in (torch.float32, torch.complex64) else torch.complex128
     n_a       = a.shape[-1]

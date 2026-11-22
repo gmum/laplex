@@ -31,6 +31,7 @@ import csv
 import importlib.util
 import json
 import math
+import os
 import random
 import socket
 import sys
@@ -44,7 +45,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 HERE = Path(__file__).resolve().parent
 CS_DIR = HERE / "CountSketch_LogisticRegression"
-DEFAULT_DATA = HERE / "data" / "imagenet10"
+DEFAULT_DATA = Path(os.environ.get("IMNET") or HERE / "data" / "imagenet10")   # IMNET: see ../.env.example
 OUT = HERE / "results" / "crossing"
 
 

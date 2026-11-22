@@ -1,13 +1,13 @@
-"""Eksperyment MNIST dla GaussianKerLapWoodbury z szybkimi operatorami LAPLEX.
+"""MNIST experiment for GaussianKerLapWoodbury with the fast LAPLEX operators.
 
-- Trenuje 25 epok, Adam lr=2e-3, batch=256.
-- Loguje postęp co 10 epok do `progress.log` (bo conda run buforuje stdout).
-- Ewaluuje LL na zbiorze testowym co 10 epok (1, 10, 20, 25) zamiast co epoka.
-- Zapisuje próbki i checkpoint z sufiksem `_1tau` / `_2tau`.
+- Trains for 25 epochs, Adam lr=2e-3, batch=256.
+- Logs the progress every 10 epochs to `progress.log` (some launchers buffer stdout).
+- Evaluates the test LL every 10 epochs (1, 10, 20, 25) instead of every epoch.
+- Saves samples and a checkpoint with the suffix `_1tau` / `_2tau`.
 
-Użycie:
-    python _run_mnist.py                 # pojedyncze tau (domyślnie)
-    python _run_mnist.py --two-tau       # dwie temperatury tau_L, tau_R
+Usage:
+    python _run_mnist.py                 # single tau (default)
+    python _run_mnist.py --two-tau       # two temperatures tau_L, tau_R
 """
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ import os
 import sys
 import time
 
-# Obejście konfliktu OpenMP (Intel libiomp5md.dll vs conda-forge) przy
-# torch+matplotlib na Windows. Musi być ustawione PRZED importem torch.
+# Workaround for an OpenMP conflict (Intel libiomp5md.dll vs conda-forge) of
+# torch + matplotlib on Windows. Must be set BEFORE importing torch.
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-# Windows cp1250 nie łyka unicode'owego τ w printach — przestaw stdout na utf-8.
+# Windows consoles (cp1250) cannot print τ — switch stdout to utf-8.
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -45,11 +45,11 @@ from laplex import laplex, laplex_gram, laplex_right
 
 
 # ------------------------------------------------------------------
-# Wrappery.  Konwencja LAPLEX:
+# Wrappers.  LAPLEX convention:
 #   K(a, b)[i, j] = exp( -|a_i - b_j| / tau_sign )
 #   tau_sign      = tau_R   if a_i > b_j
 #                   tau_L   otherwise
-# Każdy wrapper akceptuje `tau_R=None`, co automatycznie daje single-tau.
+# Every wrapper accepts `tau_R=None`, which gives a single tau.
 # ------------------------------------------------------------------
 
 def _as_tau_vec(tau):
@@ -99,8 +99,8 @@ def Ker_mult_X(X, a, b, tau_L, tau_R=None):
 def Ker_gram(alpha_out, beta_sum, D_sum, tau_L, tau_R=None):
     """K(alpha_out, beta_sum) · diag(D_sum) · K(alpha_out, beta_sum)ᵀ.
 
-    Zwraca (len(alpha_out), len(alpha_out)).
-    Konwencja taus identyczna jak wyżej: tau_R gdy alpha_out > beta_sum.
+    Returns (len(alpha_out), len(alpha_out)).
+    Tau convention as above: tau_R if alpha_out > beta_sum.
     """
     if tau_R is None:
         tau_R = tau_L
@@ -119,12 +119,12 @@ def Ker_gram(alpha_out, beta_sum, D_sum, tau_L, tau_R=None):
 # ------------------------------------------------------------------
 
 class GaussianKerLap:
-    """Funkcjonalny model z możliwie asymetrycznym jądrem Laplace.
+    """Functional model with a possibly asymmetric Laplace kernel.
 
-    Jądro w modelu:
+    Kernel of the model:
         K(α, β)[l, i] = exp( -|α_l - β_i| / τ_sign )
-        τ_sign        = τ_R  gdy α_l > β_i
-                        τ_L  w p.p.
+        τ_sign        = τ_R  if α_l > β_i
+                        τ_L  otherwise
     """
 
     def __init__(self, m, w, alpha, beta, A, s, tau_L, tau_R=None, eps=1e-12):
@@ -149,15 +149,15 @@ class GaussianKerLap:
 
         # ===== G = Kᵀ · diag(w²/s²) · K   (k, k) ============================
         # G[i, i'] = Σ_l K(α,β)[l,i] (w²/s²)[l] K(α,β)[l,i'].
-        # W Ker_gram(α_out, β_sum, D_sum, τ_L, τ_R):
-        #   - α_out = oś wyjściowa (niesumowana),
-        #   - β_sum = oś sumowana (z D po niej),
-        #   - konwencja: τ_R gdy α_out > β_sum.
-        # Dla naszego G oś wyjściowa to β (rozmiar k), sumujemy po α (n).
-        # Ponieważ α_out↔β i β_sum↔α są zamienione względem definicji K(α,β),
-        # warunek "α_out > β_sum" staje się "β > α", czyli w konwencji modelu
-        # trafia to w τ_L (bo τ_R modelu = "α > β").  Dlatego TU zamieniamy
-        # τ_L ↔ τ_R:
+        # In Ker_gram(α_out, β_sum, D_sum, τ_L, τ_R):
+        #   - α_out = output axis (not summed),
+        #   - β_sum = summed axis (with D over it),
+        #   - convention: τ_R if α_out > β_sum.
+        # For our G the output axis is β (size k), and we sum over α (n).
+        # Since α_out↔β and β_sum↔α are swapped relative to the definition of K(α,β),
+        # the condition "α_out > β_sum" becomes "β > α", which in the convention of the model
+        # selects τ_L (since the τ_R of the model = "α > β").  Hence we swap
+        # τ_L ↔ τ_R here:
         w_tilde = self.w / self.s
         G = Ker_gram(
             self.beta, self.alpha, w_tilde ** 2,
@@ -167,7 +167,7 @@ class GaussianKerLap:
 
         # ===== M = I + A G Aᵀ ===============================================
         C = self.A @ G @ self.A.T
-        C = 0.5 * (C + C.T)                       # symetryzacja vs roundoff
+        C = 0.5 * (C + C.T)                       # symmetrize against round-off
         M = torch.eye(k, device=x.device, dtype=x.dtype) + C
         L = torch.linalg.cholesky(M)
 
@@ -207,11 +207,11 @@ class GaussianKerLap:
 
 
 class GaussianKerLapWoodbury(nn.Module):
-    """Trenowalny wariant.  `single_tau=False` daje niezależne τ_L, τ_R.
+    """Trainable variant.  `single_tau=False` gives independent τ_L, τ_R.
 
-    Jeśli `mean_init` jest podane, `m` jest zarejestrowany jako buffer
-    (nietrenowalny, zamrożony) — pierwszy moment nie jest uczony SGD,
-    bo i tak empiryczna średnia z N danych jest praktycznie MLE.
+    If `mean_init` is given, `m` is registered as a buffer
+    (not trained, frozen) — the first moment is not learned by SGD,
+    since the empirical mean of the N samples is essentially the MLE anyway.
     """
 
     def __init__(self, n, k, eps=1e-4, single_tau=True, mean_init=None):
@@ -230,7 +230,7 @@ class GaussianKerLapWoodbury(nn.Module):
         self.alpha = nn.Parameter(torch.linspace(-1, 1, n))
         self.beta = nn.Parameter(torch.linspace(-1, 1, k))
 
-        # A jako dolnotrójkątna z dodatnią przekątną (Cholesky-shape).
+        # A is lower-triangular with a positive diagonal (Cholesky shape).
         self.A_off = nn.Parameter(torch.randn(k, k) * 0.01)
         self.A_diag_raw = nn.Parameter(torch.full((k,), -4.6))
 
@@ -274,11 +274,11 @@ class GaussianKerLapWoodbury(nn.Module):
 
 
 # ------------------------------------------------------------------
-# Trening.
+# Training.
 # ------------------------------------------------------------------
 
 def empirical_mean(loader, n, device):
-    """Jedno przebiegnięcie, zwraca empiryczną średnią (float32)."""
+    """One pass over the data; returns the empirical mean (float32)."""
     acc = torch.zeros(n, dtype=torch.float64, device=device)
     total = 0
     for x, _ in loader:
@@ -304,21 +304,21 @@ def evaluate(model, loader, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--two-tau", action="store_true",
-                        help="Użyj osobnych τ_L i τ_R (asymetryczne jądro).")
+                        help="Use separate τ_L and τ_R (asymmetric kernel).")
     parser.add_argument("--complex", action="store_true",
-                        help="Użyj zespolonego jądra A = Re[exp(-|α-β|/τ + i(γ-δ))].")
+                        help="Use the complex kernel A = Re[exp(-|α-β|/τ + i(γ-δ))].")
     parser.add_argument("--dense", action="store_true",
-                        help="Zamiast kernela użyj dense low-rank W∈ℝ^{n×k_d} (PPCA-like).")
+                        help="Use a dense low-rank W∈ℝ^{n×k_d} instead of the kernel (PPCA-like).")
     parser.add_argument("--k", type=int, default=50,
-                        help="Wymiar latent (β) dla kernel-modeli.")
+                        help="Latent dimension (β) of the kernel models.")
     parser.add_argument("--k-dense", type=int, default=5,
-                        help="Wymiar latent dla dense low-rank analog (--dense).")
+                        help="Latent dimension of the dense low-rank model (--dense).")
     parser.add_argument("--learn-mean", action="store_true",
-                        help="Ucz m od zera (domyślnie: zamrożone z Welforda).")
+                        help="Learn m from zero (default: frozen at the Welford mean).")
     args = parser.parse_args()
 
     if args.complex and args.dense:
-        parser.error("--complex i --dense wykluczają się.")
+        parser.error("--complex and --dense are mutually exclusive.")
 
     single_tau = not args.two_tau
     if args.dense:
@@ -363,7 +363,7 @@ def main():
 
     log(f"train={len(train_ds)}  test={len(test_ds)}")
 
-    # Empiryczna średnia (Welford-style) — zamrożona w modelu, chyba że --learn-mean.
+    # Empirical mean (Welford-style) — frozen in the model unless --learn-mean.
     if args.learn_mean:
         mean_init = None
         log("mean: learnable (init=0)")
@@ -449,7 +449,7 @@ def main():
     )
     log(f"saved checkpoint -> {ckpt_path}")
 
-    # Próbki.
+    # Samples.
     model.eval()
     with torch.no_grad():
         samples = model.sample(10).cpu()

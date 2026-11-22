@@ -1,28 +1,28 @@
-"""Gaussian density model z zespolonym jądrem Laplace.
+"""Gaussian density model with a complex Laplace kernel.
 
-Jądro w modelu:
+Kernel of the model:
     K_c(α, β, γ, δ)[l, i] = exp(-|α_l - β_i|/τ_sign + i·(γ_l - δ_i))
-    τ_sign = τ_R gdy α_l > β_i, w p.p. τ_L
+    τ_sign = τ_R if α_l > β_i, otherwise τ_L
 
-Efektywna REALNA macierz projekcyjna:
+Effective REAL projection matrix:
     A[l, i] = Re(K_c[l, i]) = exp(-|α_l - β_i|/τ_sign) · cos(γ_l - δ_i)
 
-Model gęstości (taki sam jak wcześniej, z tą samą strukturą Woodbury):
-    B = diag(w) · A · L^T,   L dolnotrójkątna k×k
+Density model (as before, with the same Woodbury structure):
+    B = diag(w) · A · L^T,   L lower-triangular k×k
     Σ = diag(s²) + B Bᵀ
 
-**Kluczowa tożsamość**: G = Aᵀ diag(D_α) A rozkłada się na trzy realne
-Laplace-gramy przez tożsamość cos-cos:
+**Key identity**: G = Aᵀ diag(D_α) A splits into three real
+Laplace Gram matrices through the cos-cos identity:
     cos(γ_l - δ_i) cos(γ_l - δ_{i'}) = ½[cos(δ_i - δ_{i'}) + cos(2γ_l - δ_i - δ_{i'})]
-Stąd:
+Hence:
     G[i,i'] = ½ [ cos(δ_i - δ_{i'}) · G_base[i,i']
                 + cos(δ_i + δ_{i'}) · G_{cos2γ}[i,i']
                 + sin(δ_i + δ_{i'}) · G_{sin2γ}[i,i'] ]
-gdzie G_{·} = K_real · diag(D_{·}) · K_realᵀ (zwykły realny Laplace-gram
-przez `laplex_gram`, wagi: D, D·cos(2γ), D·sin(2γ)).
+where G_{·} = K_real · diag(D_{·}) · K_realᵀ (a plain real Laplace Gram
+via `laplex_gram`, weights: D, D·cos(2γ), D·sin(2γ)).
 
-Lewe mnożenie v @ A = Re(v @ K_c) — `laplex_complex`.
-Prawe mnożenie A @ X = Re(K_c @ X) — `laplex_complex_right`.
+Left multiplication v @ A = Re(v @ K_c) — `laplex_complex`.
+Right multiplication A @ X = Re(K_c @ X) — `laplex_complex_right`.
 """
 from __future__ import annotations
 
@@ -39,39 +39,39 @@ import torch.nn.functional as F
 
 from laplex_complex import laplex_complex, laplex_complex_right
 
-# Reużywamy Ker_gram (realny dwu-τ) z bazowego modelu.
+# Reuse Ker_gram (real, two-τ) from the base model.
 from _run_mnist import Ker_gram, _as_tau_vec
 # Scan-based single-tau Gram  (O(n² + n·k) vs O(n²·k) dense)
 from _gram_scan import ker_D_kerT_scan
 
 
 def banded_A_times_G(A_lat, G, band_width):
-    """Efektywne A @ G gdy A_lat jest dolnie-trójkątna z szerokością pasma `band_width`.
+    """Efficient A @ G when A_lat is lower-triangular with bandwidth `band_width`.
 
     A @ G: (k, k) · (k, k) = (k, k),  koszt O((band_width+1)·k²) flops.
-    Wersja wektoryzowana (bez pętli Python):
-      1. Zbuduj G_stack ∈ ℝ^{(b+1, k, k)} z przesunięciami G po pierwszej osi.
-      2. Zbuduj weights ∈ ℝ^{(b+1, k)} z b+1 diagonalami A (zero-padded).
+    Vectorized version (no Python loop):
+      1. Build G_stack ∈ ℝ^{(b+1, k, k)} with shifts of G along the first axis.
+      2. Build weights ∈ ℝ^{(b+1, k)} from the b+1 diagonals of A (zero-padded).
       3. out[i, j] = Σ_d weights[d, i] · G_stack[d, i, j].
 
-    Trzy torch-ops zamiast ~3·(b+1) — dużo mniej launch overhead.
+    Three torch ops instead of ~3·(b+1) — much less launch overhead.
     """
     k = G.shape[0]
     b = band_width
-    # Przesunięcia G: pad top z b zerami, potem slice dla każdego d ∈ [0, b]
-    # G_pad[b + i - d, j] = G[i-d, j] gdy i >= d, else 0
+    # Shifts of G: pad the top with b zeros, then slice for every d ∈ [0, b]
+    # G_pad[b + i - d, j] = G[i-d, j] if i >= d, else 0
     G_pad = F.pad(G, (0, 0, b, 0))                              # (k+b, k)
-    # Stack przesunięć: dla d=0,...,b, kopia G_pad[b-d : b-d+k, :]
-    # Używamy as_strided albo unfold — tu stack list comprehension (1 op backend)
+    # Stack of shifts: for d=0,...,b, a copy of G_pad[b-d : b-d+k, :]
+    # as_strided or unfold would also work — here a stacked list comprehension (1 backend op)
     G_stack = torch.stack([G_pad[b - d : b - d + k] for d in range(b + 1)], dim=0)  # (b+1, k, k)
 
-    # Diagonale A_lat zapakowane w (b+1, k) z zero-padem
+    # Diagonals of A_lat packed into (b+1, k) with zero padding
     weights = torch.zeros(b + 1, k, device=G.device, dtype=G.dtype)
     weights[0] = torch.diagonal(A_lat, offset=0)
     for d in range(1, b + 1):
         weights[d, d:] = torch.diagonal(A_lat, offset=-d)
 
-    # Jeden elementwise + sum_over_d
+    # One elementwise product + sum over d
     return (weights.unsqueeze(-1) * G_stack).sum(dim=0)
 
 
@@ -83,13 +83,13 @@ def banded_A_G_AT(A_lat, G, band_width):
 
 
 # ------------------------------------------------------------------
-# Wrappery single-row (L=1) dla zespolonego jądra.
+# Single-row (L=1) wrappers for the complex kernel.
 # ------------------------------------------------------------------
 
 def CX_mult_Kc(X, alpha, beta, gamma, delta, tau_L, tau_R=None):
     """X @ K_c(α, β, γ, δ).  X: (B, n_α) real → (B, n_β) complex.
 
-    Konwencja taus: τ_R gdy α_i > β_j (jak w real laplex).
+    Tau convention: τ_R if α_i > β_j (as in the real laplex).
     """
     if tau_R is None:
         tau_R = tau_L
@@ -136,11 +136,11 @@ def Kc_mult_X(X, alpha, beta, gamma, delta, tau_L, tau_R=None):
 # ------------------------------------------------------------------
 
 class GaussianKerLapComplex:
-    """Functional model: oryginalna parametryzacja A (lower-tri pos-diag),
-    Gram przez scan (szybko), cała krytyczna ścieżka w fp64 dla stabilności,
-    bez żadnych trików z wyciąganiem A przed nawias.
+    """Functional model: the original parametrization of A (lower-triangular, positive diagonal),
+    Gram via the scan (fast), the whole critical path in fp64 for stability,
+    with no tricks factoring A out.
 
-        M = I + A·G·Aᵀ,   Σ⁻¹ via Woodbury jak w oryginalnym modelu.
+        M = I + A·G·Aᵀ,   Σ⁻¹ via Woodbury as in the original model.
     """
 
     def __init__(self, m, w, alpha, beta, gamma, delta, A_lat, s, tau_L, tau_R=None,
@@ -166,9 +166,9 @@ class GaussianKerLapComplex:
 
         D_inv = 1.0 / (self.s ** 2)
 
-        # ===== Gram przez scan fp64 (3-rozkład, O(n²+n·k) na wywołanie) ===
+        # ===== Gram via the fp64 scan (3-way split, O(n²+n·k) per call) ====
         # Pure-PyTorch fp64 torch.cumsum (CUDA-executed).  ~0.86ms/call vs
-        # dense fp32 1.48ms/call przy (n=500, k=3072).  Stabilny dzięki fp64.
+        # dense fp32 1.48ms/call at (n=500, k=3072).  Stable thanks to fp64.
         same_tau = (self.tau_L is self.tau_R) or bool(
             (self.tau_L == self.tau_R).all()
         )
@@ -189,8 +189,8 @@ class GaussianKerLapComplex:
             G_sin2g = Ker_gram(self.beta, self.alpha, w_tilde_sq * sin2g,
                                tau_L=self.tau_R, tau_R=self.tau_L)
 
-        # Wszystko do fp64 do sumowania (scan już zwraca fp32 po cast-u) —
-        # re-cast dla pewności że weighted sum jest w fp64.
+        # Everything to fp64 for the sum (the scan returns fp32 after the cast) —
+        # re-cast so that the weighted sum is surely in fp64.
         G_base64  = G_base.to(torch.float64)
         G_cos2g64 = G_cos2g.to(torch.float64)
         G_sin2g64 = G_sin2g.to(torch.float64)
@@ -205,7 +205,7 @@ class GaussianKerLapComplex:
 
         # ===== M = I + A G Aᵀ, Cholesky — w fp64 =======================
         A64 = self.A_lat.to(torch.float64)
-        G64 = G                                                            # już fp64
+        G64 = G                                                            # already fp64
         C64 = A64 @ G64 @ A64.T
         C64 = 0.5 * (C64 + C64.T)
         I_k64 = torch.eye(k, device=x.device, dtype=torch.float64)
@@ -219,9 +219,9 @@ class GaussianKerLapComplex:
                 L_chol64 = L_try
                 break
         if L_chol64 is None:
-            raise RuntimeError("Cholesky(M) nie zszedł nawet w fp64 z jitterem 1e-2")
+            raise RuntimeError("Cholesky(M) failed even in fp64 with jitter 1e-2")
 
-        # ===== quadratic (kompilacja w fp64 dla quad+logdet) ============
+        # ===== quadratic form (computed in fp64 for quad + logdet) =====
         diff = x - self.m
         Dinv_diff = diff * D_inv
         v = Dinv_diff * self.w                                            # (B, n) fp32
@@ -252,8 +252,8 @@ class GaussianKerLapComplex:
     def map_project(self, x):
         """MAP posterior mean: x_hat = m + F(sol), sol = M^{-1} F^T(diff/s^2).
 
-        Wykorzystuje ten sam M i sol co log_likelihood, bez powtarzania kodu.
-        Szybkie operacje macierzowe (CX_mult_Kc / Kc_mult_X).
+        Uses the same M and sol as log_likelihood, without repeating the code.
+        Fast matrix operations (CX_mult_Kc / Kc_mult_X).
         """
         if x.ndim == 1:
             x = x.unsqueeze(0)
@@ -329,24 +329,24 @@ class GaussianKerLapComplex:
 
 
 # ------------------------------------------------------------------
-# Trenowalny moduł.
+# Trainable module.
 # ------------------------------------------------------------------
 
 class GaussianKerLapComplexWoodbury(nn.Module):
-    """Trenowalny wariant z jądrem zespolonym.
+    """Trainable variant with the complex kernel.
 
-    Dodatkowe parametry względem wariantu realnego:
-      - γ : (n,)   fazy na α-side
-      - δ : (k,)   fazy na β-side
-    (faza temperatura `s` ustawiona na 1 i nietrenowalna — γ,δ same
-    absorbują skalę.)
+    Extra parameters compared with the real variant:
+      - γ : (n,)   phases on the α side
+      - δ : (k,)   phases on the β side
+    (the phase temperature `s` is fixed to 1 and not trained — γ, δ
+    absorb the scale themselves.)
     """
 
     def __init__(self, n, k, eps=1e-4, single_tau=True, mean_init=None,
                  band_width=None):
-        """band_width: liczba niezerowych poddiagonal w A_lat (nie licząc
-        głównej). Dla band_width=5 A_lat ma 5 pod-diagonal + główną = 6
-        niezerowych diagonal. None = pełne dolne tril."""
+        """band_width: number of non-zero subdiagonals of A_lat (not counting
+        the main one). For band_width=5, A_lat has 5 subdiagonals + the main one = 6
+        non-zero diagonals. None = the full lower triangle."""
         super().__init__()
         self.n = n
         self.k = k
@@ -362,12 +362,12 @@ class GaussianKerLapComplexWoodbury(nn.Module):
 
         self.alpha = nn.Parameter(torch.linspace(-1, 1, n))
         self.beta  = nn.Parameter(torch.linspace(-1, 1, k))
-        # γ, δ: start z innego linspace żeby od razu mieć niezerowe fazy
-        # (gradient γ,δ przy zerowej różnicy = 0).
+        # γ, δ: start from a different linspace to have non-zero phases at once
+        # (the gradient of γ, δ is 0 when their difference is zero).
         self.gamma = nn.Parameter(torch.linspace(-1, 1, n))
         self.delta = nn.Parameter(torch.linspace(-1, 1, k))
 
-        # A-parametryzacja: lower-tri z dodatnią diagonalą (oryginalny init).
+        # A parametrization: lower-triangular with a positive diagonal (original init).
         if band_width is not None:
             self.band_subdiags = nn.ParameterList([
                 nn.Parameter(torch.randn(k - d) * 0.01)

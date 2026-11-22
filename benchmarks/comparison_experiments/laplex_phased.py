@@ -31,10 +31,10 @@ def X_LaplexPhase(X: Tensor, alpha: Tensor, beta: Tensor,
                   tau: Optional[float] = None) -> Tensor:
     """``X @ A_phase``  with  A_phase[i,j] = exp(-|alpha_i-beta_j|/tau) * cos(gamma_i-delta_j).
 
-    X : (B, n) lub (n,)  real
+    X : (B, n) or (n,)  real
     alpha, gamma : (n,)
     beta,  delta : (k,)
-    Returns (B, k) lub (k,)  same real dtype as X.
+    Returns (B, k) or (k,)  same real dtype as X.
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -69,7 +69,7 @@ def LaplexPhase_X(X: Tensor, alpha: Tensor, beta: Tensor,
                   tau: Optional[float] = None) -> Tensor:
     """``A_phase @ X``.
 
-    X : (k, B) lub (k,)     ->     (n, B) lub (n,).
+    X : (k, B) or (k,)     ->     (n, B) or (n,).
     Implemented via transpose identity:
         A_phase X = (X^T A_phase^T)^T,  A_phase^T = A_phase swap (alpha,gamma)<->(beta,delta).
     """
@@ -93,7 +93,7 @@ def LaplexPhase_D_LaplexPhaseT(alpha: Tensor, beta: Tensor,
                                tau: Optional[float] = None) -> Tensor:
     """``A_phase @ diag(D) @ A_phase^T``  ->  shape (n, n).
 
-    Trzy real Gram-scany:
+    Three real Gram scans:
         G0      = K diag(D)              K^T
         Gc_real = K diag(D cos(2 delta)) K^T
         Gc_imag = K diag(-D sin(2 delta)) K^T

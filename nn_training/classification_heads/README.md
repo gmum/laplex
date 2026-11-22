@@ -63,13 +63,12 @@ symlinks:
 
 ```bash
 cd nn_training
-python3 make_imagenet10.py --all-classes --src <ImageNet>/CLS-LOC --val-csv <ImageNet>/LOC_val_solution.csv
-export DATA_ROOT=$PWD/data/imagenet VAL_ROOT=$PWD/data/imagenet/val
+python3 make_imagenet10.py --all-classes       # IMAGENET_ROOT, IMAGENET_VAL_CSV from ../.env (or --src, --val-csv)
+# in ../.env:  DATA_ROOT=<repo>/nn_training/data/imagenet   VAL_ROOT=<repo>/nn_training/data/imagenet/val
 bash sif.sh python classification_heads/train/train_laplex_frozen.py
 bash sif.sh python classification_heads/train/train_lora_frozen.py
 ```
 
-(the defaults of `--src` and `--val-csv` are the copies on the cluster used for the paper).
 For the grid of Tab. 2/7, set `MODEL`, `RANK` and `SEED` in the two `*_frozen.py`
 configs: 2 backbones × 3 ranks × 5 seeds = 30 runs of 30 epochs per head. Each run
 prints per-epoch train/val loss and top-1 accuracy, and saves the weights with the best

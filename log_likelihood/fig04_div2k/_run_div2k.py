@@ -1,9 +1,9 @@
-"""Trening LAPLEX / dense LR Gaussian density modelu na DIV2K-1024.
+"""Training of the LAPLEX / dense low-rank Gaussian density models on DIV2K-1024.
 
 DIV2K: 800 train / 100 val, random crop 1024x1024 -> n = 3,145,728
-(identyczne n jak MetFaces-1024, dzieki czemu modele sa porownywalne).
+(the same n as MetFaces-1024, so the models are comparable).
 
-Komendy:
+Commands:
     python _run_div2k.py --complex --k 1000 --batch-size 8 --epochs 20
     python _run_div2k.py --dense --k-dense 4 --batch-size 8
 """
@@ -61,7 +61,7 @@ def main():
     args = parser.parse_args()
 
     if args.complex and args.dense:
-        parser.error("--complex i --dense wzajemnie wykluczajace.")
+        parser.error("--complex and --dense are mutually exclusive.")
 
     single_tau  = not args.two_tau
     K_LATENT    = args.k
@@ -97,7 +97,7 @@ def main():
         cap = torch.cuda.get_device_capability()
         log(f"GPU={torch.cuda.get_device_name()}  cap=sm_{cap[0]}{cap[1]}")
 
-    # resize krotszy bok do 1024, potem crop (niektore obrazy maja high < 1024)
+    # resize the shorter side to 1024, then crop (some images are less than 1024 high)
     tf_train = transforms.Compose([
         transforms.Resize(IMG_SIZE),
         transforms.RandomCrop(IMG_SIZE),

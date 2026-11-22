@@ -1,4 +1,4 @@
-# Copy of 2026-LAPLEX/merged_events.py (2026-05-18) with ONE fix: the closing """ of _CUDA_SRC
+# Copy of merged_events.py of the internal LAPLEX library (2026-05-18) with ONE fix: the closing """ of _CUDA_SRC
 # (after the closing brace of merged_LR_launch) was missing, so the original does not parse.
 """
 merged_events.py

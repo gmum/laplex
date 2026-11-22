@@ -10,19 +10,20 @@ nats per image; bits/dim = −LL / (n ln 2), so lower bits/dim is better.
 | [table09_10_circulant/](table09_10_circulant/) | App. I.2, Tabs. 9, 10 | block-circulant Gaussian (K = 1), mixtures (K = 5, K = 3) and the diagonal floor, in permuted and raster coordinates |
 | [table15_downstream/](table15_downstream/) | App. L, Tab. 15 | PPCA, dense low-rank, LAPLEX, FFT-circulant and Kronecker on raster-order ImageNette, with MAP denoising |
 
-`bash sif.sh <command>` runs a command in the Singularity image of the paper
-(`LAPLEX_SIF` selects another one) from this directory. All scripts need one CUDA GPU; the
-LAPLEX scan kernels are compiled with `nvcc` on first import.
+`bash sif.sh <command>` runs a command from this directory in the container image named by
+`LAPLEX_SIF` in `../.env` (see [../.env.example](../.env.example)), or in the current
+environment without one. All scripts need one CUDA GPU; the LAPLEX scan kernels are compiled
+with `nvcc` on first import.
 
 ## Data
 
 - **`imagenette2-320`** (fast.ai Imagenette, 9,469 train / 3,925 val, resized and centre-cropped
-  to 320 × 320, n = 307,200) for Tabs. 8–10. Set `IMAGENETTE_ROOT`.
+  to 320 × 320, n = 307,200) for Tabs. 8–10. Set `IMAGENETTE_ROOT` in `../.env`.
 - **DIV2K** with `DIV2K_train_HR/` and `DIV2K_valid_HR/` (800 / 100, resized and cropped to
-  1024 × 1024, n = 3,145,728) for Fig. 4 and Tabs. 9, 10. Set `DIV2K_ROOT`.
+  1024 × 1024, n = 3,145,728) for Fig. 4 and Tabs. 9, 10. Set `DIV2K_ROOT` in `../.env`.
 - **ImageNet-10** for Tab. 15: the ten ImageNet synsets, built by
   [../nn_training/make_imagenet10.py](../nn_training/make_imagenet10.py), capped at 800 images
-  per class (8,000 training images), `--imagenet_root`.
+  per class (8,000 training images); `IMNET` in `../.env` or `--imagenet_root`.
 
 ## Sec. 4.2 and App. I.1
 

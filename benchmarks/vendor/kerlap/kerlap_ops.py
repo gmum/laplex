@@ -1,23 +1,23 @@
 """
 kerlap_ops.py
 
-Szybkie implementacje CUDA trzech operacji na macierzy kernelowej
+Fast CUDA implementations of three operations on the kernel matrix
 K(a,b)[i,j] = exp(-|a[i] - b[j]|):
 
   X_KerLap(X, a, b)              = X @ K(a,b)
   KerLap_X(X, a, b)              = K(a,b) @ X
   Ker_D_KerT(alpha, beta, D)     = K(alpha,beta) @ diag(D) @ K(alpha,beta)^T
 
-Bazuje na DL prefix/suffix scan z prefix_suffix_dl.py.
-Dla wymiaru skanu <= 1024 automatyczny fallback na mnozenie macierzowe.
-Wszystkie funkcje sa rozniczkowane (autograd).
+Built on the DL prefix/suffix scan of prefix_suffix_dl.py.
+For a scan dimension <= 1024 it falls back to a matrix product.
+All functions are differentiable (autograd).
 
-ZLOZONOSC
+COMPLEXITY
 ---------
-Naiwna: O(n*k) (budowa macierzy K)
-DL:     O(n log n + k)  lub  O(k log k + n)  (scan na krotszym wymiarze)
+Naive: O(n*k) (building the matrix K)
+DL:     O(n log n + k)  or  O(k log k + n)  (scan over the shorter dimension)
 
-Ker_D_KerT: O(n^2 + k log n) zamiast O(n*k + n^2*k)
+Ker_D_KerT: O(n^2 + k log n) instead of O(n*k + n^2*k)
 """
 
 import os, sys, math, time
@@ -34,14 +34,14 @@ from prefix_suffix_dl import (
 
 
 # ============================================================
-# Core autograd: prefix i suffix OSOBNO (rozne u, v)
+# Core autograd: prefix and suffix SEPARATELY (different u, v)
 # ============================================================
 class _PrefSuffDiffFn(Function):
     """
-    Zwraca (prefix(alpha, u), suffix(alpha, v)) dla (potencjalnie) roznych u, v.
+    Returns (prefix(alpha, u), suffix(alpha, v)) for (possibly) different u, v.
 
-    Forward:  1x _ps_raw  (2 DL-skany)
-    Backward: 1x _ps_raw  (2 DL-skany) + elementwise ops
+    Forward:  1x _ps_raw  (2 DL scans)
+    Backward: 1x _ps_raw  (2 DL scans) + elementwise ops
     """
 
     @staticmethod
@@ -63,7 +63,7 @@ class _PrefSuffDiffFn(Function):
         gP32 = gP.float()
         gS32 = gS.float()
 
-        # prefix(a, gS)  i  suffix(a, gP)  -- jeden _ps_raw
+        # prefix(a, gS)  and  suffix(a, gP)  -- one _ps_raw
         prefix_gS, suffix_gP = _ps_raw(ef, n_fwd, ef_neg, n_bwd, gS32, gP32)
 
         grad_u = suffix_gP.to(od) if ctx.needs_input_grad[1] else None
@@ -80,16 +80,16 @@ class _PrefSuffDiffFn(Function):
 
 def prefix_suffix_sep(alpha, u, v=None):
     """
-    Zwraca (prefix(alpha, u), suffix(alpha, v)).
-    Jesli v is None, uzywa v = u.
-    alpha: [T], u: [B, T] lub [T], v: [B, T] lub [T].
+    Returns (prefix(alpha, u), suffix(alpha, v)).
+    If v is None, v = u.
+    alpha: [T], u: [B, T] or [T], v: [B, T] or [T].
     """
     if v is None:
         v = u
     squeeze = u.dim() == 1
     if squeeze:
         u = u.unsqueeze(0)
-        v = v.unsqueeze(0) if v is not u else u  # unikaj podwojnego unsqueeze
+        v = v.unsqueeze(0) if v is not u else u  # avoid a double unsqueeze
     P, S = _PrefSuffDiffFn.apply(alpha, u, v)
     if squeeze:
         P = P.squeeze(0)
@@ -102,13 +102,13 @@ def prefix_suffix_sep(alpha, u, v=None):
 # ============================================================
 def X_KerLap(X, a, b, threshold=1024):
     """
-    Oblicza X @ K(a,b)  gdzie K[i,j] = exp(-|a[i] - b[j]|).
+    Computes X @ K(a,b)  where K[i,j] = exp(-|a[i] - b[j]|).
 
-    X : (B, n) lub (n,)
+    X : (B, n) or (n,)
     a : (n,)
     b : (k,)
-    threshold : dla min(n,k) <= threshold uzywa mnozenia macierzowego
-    zwraca : (B, k) lub (k,)
+    threshold : for min(n,k) <= threshold a matrix product is used
+    returns : (B, k) or (k,)
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -117,13 +117,13 @@ def X_KerLap(X, a, b, threshold=1024):
     n = a.numel()
     k = b.numel()
 
-    # Fallback: bezposrednie mnozenie macierzowe
+    # Fallback: direct matrix product
     if min(n, k) <= threshold:
         K = torch.exp(-(a.unsqueeze(1) - b.unsqueeze(0)).abs())  # (n, k)
         y = X @ K
         return y.squeeze(0) if squeeze else y
 
-    # DL scan -- wybierz krotszy wymiar do skanowania
+    # DL scan -- scan over the shorter dimension
     if n <= k:
         y = _xA(X, a, b)
     else:
@@ -133,25 +133,25 @@ def X_KerLap(X, a, b, threshold=1024):
 
 
 def _xA(X, a, b):
-    """X @ K(a,b) -- sort a (n elem), scan na n, gather dla k wyjsc."""
+    """X @ K(a,b) -- sort a (n elements), scan over n, gather for the k outputs."""
     B, n = X.shape
     k = b.numel()
 
     a_s, perm = torch.sort(a)
     X_s = X[:, perm]
 
-    # prefix i suffix osobno
+    # prefix and suffix separately
     P, S = prefix_suffix_sep(a_s, X_s)
 
-    # Dla kazdego b[j]: c = max i t.z. a_s[i] <= b[j]
-    c = torch.searchsorted(a_s, b, right=True) - 1  # (k,), wartosci w [-1, n-1]
+    # For every b[j]: c = max i such that a_s[i] <= b[j]
+    c = torch.searchsorted(a_s, b, right=True) - 1  # (k,), values in [-1, n-1]
 
-    # Left: exp(a_s[c] - b) * P[:, c]   (valid gdy c >= 0)
+    # Left: exp(a_s[c] - b) * P[:, c]   (valid when c >= 0)
     c_l = c.clamp(min=0)
     gate_l = (c >= 0).to(X.dtype)
     w_l = torch.exp(a_s[c_l] - b) * gate_l  # (k,)
 
-    # Right: exp(b - a_s[c+1]) * S[:, c+1]   (valid gdy c+1 < n)
+    # Right: exp(b - a_s[c+1]) * S[:, c+1]   (valid when c+1 < n)
     c_r = (c + 1).clamp(max=n - 1)
     gate_r = ((c + 1) < n).to(X.dtype)
     w_r = torch.exp(b - a_s[c_r]) * gate_r  # (k,)
@@ -161,14 +161,14 @@ def _xA(X, a, b):
 
 
 def _xAT(X, a, b):
-    """X @ K(a,b) gdy n > k -- sort b (k elem), scatter, scan na k."""
+    """X @ K(a,b) when n > k -- sort b (k elements), scatter, scan over k."""
     B, n = X.shape
     k = b.numel()
 
     b_s, perm_b = torch.sort(b)
     inv_perm_b = torch.argsort(perm_b)
 
-    # Dla kazdego a[i], znajdz bucket w sorted b
+    # For every a[i], find its bucket in the sorted b
     idx = torch.searchsorted(b_s, a, right=True) - 1  # (n,)
 
     # Left scatter: u[c] += X[:, i] * exp(b_s[c] - a[i])
@@ -187,7 +187,7 @@ def _xAT(X, a, b):
         1, i_v.unsqueeze(0).expand(B, -1), X * vals_v.unsqueeze(0)
     )
 
-    # prefix(b_s, v) + suffix(b_s, u) -- uzywa juz istniejacego differentiable API
+    # prefix(b_s, v) + suffix(b_s, u) -- uses the existing differentiable API
     result_sorted = _prefix_suffix_sum(b_s, v, u)
 
     return result_sorted[:, inv_perm_b]
@@ -198,13 +198,13 @@ def _xAT(X, a, b):
 # ============================================================
 def KerLap_X(X, a, b, threshold=1024):
     """
-    Oblicza K(a,b) @ X  gdzie K[i,j] = exp(-|a[i] - b[j]|).
+    Computes K(a,b) @ X  where K[i,j] = exp(-|a[i] - b[j]|).
 
-    X : (k, D) lub (k,)
+    X : (k, D) or (k,)
     a : (n,)
     b : (k,)
-    threshold : dla min(n,k) <= threshold uzywa mnozenia macierzowego
-    zwraca : (n, D) lub (n,)
+    threshold : for min(n,k) <= threshold a matrix product is used
+    returns : (n, D) or (n,)
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -221,19 +221,19 @@ def KerLap_X(X, a, b, threshold=1024):
 # ============================================================
 def Ker_D_KerT(alpha, beta, D, threshold=1024):
     """
-    Oblicza K(alpha,beta) @ diag(D) @ K(alpha,beta)^T.
-    Wynik: symetryczna macierz (n, n).
+    Computes K(alpha,beta) @ diag(D) @ K(alpha,beta)^T.
+    Result: a symmetric (n, n) matrix.
 
     alpha : (n,)
     beta  : (k,)
     D     : (k,)
-    threshold : dla n <= threshold uzywa naiwnego mnozenia
-    zwraca : (n, n)
+    threshold : for n <= threshold the naive product is used
+    returns : (n, n)
     """
     n = alpha.numel()
     k = beta.numel()
 
-    # Fallback: bezposrednie mnozenie
+    # Fallback: direct product
     if n <= threshold:
         K = torch.exp(-(alpha.unsqueeze(1) - beta.unsqueeze(0)).abs())  # (n, k)
         return (K * D.unsqueeze(0)) @ K.T
@@ -242,7 +242,7 @@ def Ker_D_KerT(alpha, beta, D, threshold=1024):
 
 
 def _Ker_D_KerT_scan(alpha, beta, D):
-    """Scan-based Ker_D_KerT dla n > threshold."""
+    """Scan-based Ker_D_KerT for n > threshold."""
     n = alpha.numel()
     k = beta.numel()
     device = alpha.device
@@ -252,10 +252,10 @@ def _Ker_D_KerT_scan(alpha, beta, D):
     alpha_s, perm = torch.sort(alpha)
     inv_perm = torch.argsort(perm)
 
-    # Bucket beta -> przedzialy alpha
-    idx = torch.bucketize(beta, alpha_s, right=True)  # (k,) wartosci w [0, n]
+    # Bucket beta into the alpha intervals
+    idx = torch.bucketize(beta, alpha_s, right=True)  # (k,) values in [0, n]
 
-    # alpha_ext: sentinele na krancach
+    # alpha_ext: sentinels at both ends
     alpha_ext = torch.cat(
         [
             beta.min().unsqueeze(0),
@@ -287,16 +287,16 @@ def _Ker_D_KerT_scan(alpha, beta, D):
     # --- W = cumsum(w[:n]) ---
     W = torch.cumsum(w[:n], dim=0)
 
-    # --- Budowa macierzy M ---
+    # --- Build the matrix M ---
     ai = alpha_s.unsqueeze(1)  # (n, 1)
     aj = alpha_s.unsqueeze(0)  # (1, n)
 
-    # diff[i,j] = exp(-relu(ai - aj)):  exp(aj-ai) dla i>=j, 1 dla i<j
+    # diff[i,j] = exp(-relu(ai - aj)):  exp(aj-ai) for i>=j, 1 for i<j
     diff = torch.exp(-torch.relu(ai - aj))
 
     M_raw = diff * (U.unsqueeze(0) + (W.unsqueeze(1) - W.unsqueeze(0)) + V.unsqueeze(1))
 
-    # Symetryzacja: M = tril(M_raw) + tril(M_raw, -1)^T
+    # Symmetrization: M = tril(M_raw) + tril(M_raw, -1)^T
     M = torch.tril(M_raw) + torch.tril(M_raw, -1).T
 
     # Unsort
@@ -306,7 +306,7 @@ def _Ker_D_KerT_scan(alpha, beta, D):
 
 
 # ============================================================
-# Naiwne referencje (do testow)
+# Naive references (for the tests)
 # ============================================================
 def _naive_X_KerLap(X, a, b):
     K = torch.exp(-(a.unsqueeze(1) - b.unsqueeze(0)).abs())
@@ -324,7 +324,7 @@ def _naive_Ker_D_KerT(alpha, beta, D):
 
 
 # ============================================================
-# Testy poprawnosci
+# Correctness tests
 # ============================================================
 def run_correctness_tests():
     device = "cuda"
@@ -405,7 +405,7 @@ def run_correctness_tests():
 
 
 # ============================================================
-# Testy gradientow
+# Gradient tests
 # ============================================================
 def run_gradient_tests():
     device = "cuda"
@@ -441,11 +441,11 @@ def run_gradient_tests():
 
         def fn_sep(a, u, v):
             P, S = _PrefSuffDiffFn.apply(a, u, v)
-            return P + S  # skalar-kowalny
+            return P + S  # reduced to a scalar
 
         gtest(f"T={T}", fn_sep, (a, u, v))
 
-    # --- X_KerLap gradient porownanie z naive ---
+    # --- X_KerLap gradient compared with naive ---
     print("\n=== X_KerLap gradient vs naive ===")
     for n, k in [(20, 30), (30, 20)]:
         a = torch.sort(torch.randn(n, device=device))[0].requires_grad_(True)
@@ -540,7 +540,7 @@ def run_gradient_tests():
 
 
 # ============================================================
-# Benchmarki
+# Benchmarks
 # ============================================================
 def run_benchmarks():
     device = "cuda"
@@ -585,7 +585,7 @@ def run_benchmarks():
 
     # ================================================================
     print("=" * 80)
-    print("=== X_KerLap / KerLap_X  Benchmarki ===")
+    print("=== X_KerLap / KerLap_X  benchmarks ===")
     print("=" * 80)
 
     hdr = (
@@ -595,8 +595,8 @@ def run_benchmarks():
     )
     sep = "  " + "-" * 95
 
-    # --- Skalowanie T (n=k, B=4) ---
-    print("\n--- X_KerLap: Skalowanie T (n=k, B=4) ---")
+    # --- Scaling in T (n=k, B=4) ---
+    print("\n--- X_KerLap: scaling in T (n=k, B=4) ---")
     print(hdr)
     print(sep)
     B = 4
@@ -606,7 +606,7 @@ def run_benchmarks():
         b = torch.randn(T, device=device)
         X = torch.randn(B, T, device=device)
 
-        # DL najpierw (zeby naive nie zasmiecal GPU cache)
+        # DL first (so that naive does not pollute the GPU cache)
         t_dl, m_dl = bench_fn(lambda: X_KerLap(X, a, b, threshold=0))
 
         def mk_dl():
@@ -617,7 +617,7 @@ def run_benchmarks():
 
         t_dl_fb, m_dl_fb = bench_fb(mk_dl)
 
-        # Naive po DL (alokuje T*T macierz, wiec tylko dla malych T)
+        # Naive after DL (allocates a T*T matrix, so only for small T)
         t_nv, _ = (
             bench_fn(lambda: _naive_X_KerLap(X, a, b))
             if T <= 2**14
@@ -641,7 +641,7 @@ def run_benchmarks():
             f"  {spd:7.1f}x  {m_dl_fb:6.0f}MB"
         )
 
-    # --- Skalowanie n!=k ---
+    # --- Scaling with n != k ---
     print("\n--- X_KerLap: n != k (B=4) ---")
     print(hdr)
     print(sep)
@@ -674,7 +674,7 @@ def run_benchmarks():
 
     # ================================================================
     print("\n" + "=" * 80)
-    print("=== Ker_D_KerT  Benchmarki ===")
+    print("=== Ker_D_KerT  benchmarks ===")
     print("=" * 80)
 
     hdr2 = (
@@ -741,12 +741,12 @@ def run_benchmarks():
 # ============================================================
 if __name__ == "__main__":
     print("=" * 60)
-    print("TESTY POPRAWNOSCI")
+    print("CORRECTNESS TESTS")
     print("=" * 60)
     run_correctness_tests()
 
     print("=" * 60)
-    print("TESTY GRADIENTOW")
+    print("GRADIENT TESTS")
     print("=" * 60)
     run_gradient_tests()
 

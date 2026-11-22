@@ -2,7 +2,7 @@
 kerlap_ops.py
 =============
 
-Szybkie CUDA implementacje operacji na macierzy kernelowej Laplace'a
+Fast CUDA implementations of operations on the Laplace kernel matrix
 
     K(a, b)[i, j] = exp(-|a[i] - b[j]|)
 
@@ -10,12 +10,12 @@ Szybkie CUDA implementacje operacji na macierzy kernelowej Laplace'a
     KerLap_X(X, a, b)            =  K(a, b) @ X
     Ker_D_KerT(alpha, beta, D)   =  K(alpha, beta) @ diag(D) @ K(alpha, beta)^T
 
-Bazuje na rozniczkowalnym DL prefix/suffix z prefix_suffix_dl.py.
-Dla wymiaru skanu <= threshold automatyczny fallback na zwykle mnozenie macierzy.
+Built on the differentiable DL prefix/suffix of prefix_suffix_dl.py.
+For a scan dimension <= threshold it falls back to a plain matrix product.
 
-ZLOZONOSC (w porownaniu do naiwnego O(n*k) lub O(n^2*k))
-    X @ K / K @ X :   O(n log n + k)   (scan na krotszym wymiarze)
-    Ker_D_KerT    :   O(n^2 + k log n) zamiast O(n*k + n^2*k)
+COMPLEXITY (compared with the naive O(n*k) or O(n^2*k))
+    X @ K / K @ X :   O(n log n + k)   (scan over the shorter dimension)
+    Ker_D_KerT    :   O(n^2 + k log n) instead of O(n*k + n^2*k)
 """
 
 import os, sys
@@ -34,15 +34,15 @@ from prefix_suffix_dl import (
 # ============================================================
 def X_KerLap(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
     """
-    Oblicza X @ K(a, b) gdzie K[i, j] = exp(-|a[i] - b[j]|).
+    Computes X @ K(a, b) where K[i, j] = exp(-|a[i] - b[j]|).
 
-    X : (B, n) lub (n,)
+    X : (B, n) or (n,)
     a : (n,)
     b : (k,)
-    threshold : dla min(n, k) <= threshold uzywa mnozenia macierzowego
-    a_sorted  : True jesli a jest juz posortowane rosnaco (pomija sort)
-    b_sorted  : True jesli b jest juz posortowane rosnaco
-    zwraca : (B, k) lub (k,)
+    threshold : for min(n, k) <= threshold a matrix product is used
+    a_sorted  : True if a is already sorted ascending (skips the sort)
+    b_sorted  : True if b is already sorted ascending
+    returns : (B, k) or (k,)
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -51,13 +51,13 @@ def X_KerLap(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
     n = a.numel()
     k = b.numel()
 
-    # Fallback: naiwne mnozenie (szybsze dla malych n, k)
+    # Fallback: naive product (faster for small n, k)
     if min(n, k) <= threshold:
         K = torch.exp(-(a.unsqueeze(1) - b.unsqueeze(0)).abs())  # (n, k)
         y = X @ K
         return y.squeeze(0) if squeeze else y
 
-    # DL scan na krotszym wymiarze
+    # DL scan over the shorter dimension
     if n <= k:
         y = _xA(X, a, b, a_sorted=a_sorted)
     else:
@@ -68,8 +68,8 @@ def X_KerLap(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
 
 def _xA(X, a, b, a_sorted=False):
     """
-    X @ K(a, b), gdy n <= k: skanujemy na osi a (krotszej), potem dla
-    kazdego b[j] zbieramy wartosc z dwoch sasiadow w posortowanym a.
+    X @ K(a, b) when n <= k: scan along the (shorter) a axis, then for
+    every b[j] combine the values of its two neighbours in the sorted a.
     """
     B, n = X.shape
     k = b.numel()
@@ -84,15 +84,15 @@ def _xA(X, a, b, a_sorted=False):
     # prefix(a_s, X_s) i suffix(a_s, X_s) (te same u, v = X_s)
     P, S = prefix_suffix_sep(a_s, X_s)
 
-    # Dla kazdego b[j]: c = max i t.z. a_s[i] <= b[j] (lub -1 jesli b[j]<a_s[0])
+    # For every b[j]: c = max i such that a_s[i] <= b[j] (or -1 if b[j] < a_s[0])
     c = torch.searchsorted(a_s, b, right=True) - 1  # (k,) w [-1, n-1]
 
-    # Lewy koniec: exp(a_s[c] - b) * P[:, c]   (tylko gdy c >= 0)
+    # Left end: exp(a_s[c] - b) * P[:, c]   (only when c >= 0)
     c_l = c.clamp(min=0)
     gate_l = (c >= 0).to(X.dtype)
     w_l = torch.exp(a_s[c_l] - b) * gate_l  # (k,)
 
-    # Prawy koniec: exp(b - a_s[c+1]) * S[:, c+1]   (tylko gdy c+1 < n)
+    # Right end: exp(b - a_s[c+1]) * S[:, c+1]   (only when c+1 < n)
     c_r = (c + 1).clamp(max=n - 1)
     gate_r = ((c + 1) < n).to(X.dtype)
     w_r = torch.exp(b - a_s[c_r]) * gate_r  # (k,)
@@ -102,8 +102,8 @@ def _xA(X, a, b, a_sorted=False):
 
 def _xAT(X, a, b, b_sorted=False):
     """
-    X @ K(a, b), gdy n > k: zamiast skanowac na n, scatter-ujemy n elementow
-    do k kubelkow (po sortowanym b), potem skan na k i brak gather.
+    X @ K(a, b) when n > k: instead of scanning over n, scatter the n elements
+    into k buckets (of the sorted b), then scan over k, with no gather.
     """
     B, n = X.shape
     k = b.numel()
@@ -115,10 +115,10 @@ def _xAT(X, a, b, b_sorted=False):
         b_s, perm_b = torch.sort(b)
         inv_perm_b = torch.argsort(perm_b)
 
-    # Dla kazdego a[i]: kubel w posortowanym b (tak samo jak w _xA, rolami zamienione)
+    # For every a[i]: its bucket in the sorted b (as in _xA, with the roles swapped)
     idx = torch.searchsorted(b_s, a, right=True) - 1  # (n,)
 
-    # Lewy scatter: u[c] += X[:, i] * exp(b_s[c] - a[i])
+    # Left scatter: u[c] += X[:, i] * exp(b_s[c] - a[i])
     i_u = idx.clamp(min=0)
     gate_u = (idx >= 0).to(X.dtype)
     vals_u = torch.exp(b_s[i_u] - a) * gate_u  # (n,)
@@ -126,7 +126,7 @@ def _xAT(X, a, b, b_sorted=False):
         1, i_u.unsqueeze(0).expand(B, -1), X * vals_u.unsqueeze(0)
     )
 
-    # Prawy scatter: v[c+1] += X[:, i] * exp(a[i] - b_s[c+1])
+    # Right scatter: v[c+1] += X[:, i] * exp(a[i] - b_s[c+1])
     i_v = (idx + 1).clamp(max=k - 1)
     gate_v = ((idx + 1) < k).to(X.dtype)
     vals_v = torch.exp(a - b_s[i_v]) * gate_v  # (n,)
@@ -143,16 +143,16 @@ def _xAT(X, a, b, b_sorted=False):
 
 
 # ============================================================
-# KerLap_X  =  K(a, b) @ X  (implementowane przez transpozycje)
+# KerLap_X  =  K(a, b) @ X  (implemented through the transpose)
 # ============================================================
 def KerLap_X(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
     """
-    Oblicza K(a, b) @ X  gdzie K[i, j] = exp(-|a[i] - b[j]|).
+    Computes K(a, b) @ X  where K[i, j] = exp(-|a[i] - b[j]|).
 
-    X : (k, D) lub (k,)
+    X : (k, D) or (k,)
     a : (n,)
     b : (k,)
-    zwraca : (n, D) lub (n,)
+    returns : (n, D) or (n,)
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -169,13 +169,13 @@ def KerLap_X(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
 # ============================================================
 def Ker_D_KerT(alpha, beta, D, threshold=1024, alpha_sorted=False):
     """
-    Oblicza K(alpha, beta) @ diag(D) @ K(alpha, beta)^T.  Wynik: (n, n) symetryczny.
+    Computes K(alpha, beta) @ diag(D) @ K(alpha, beta)^T.  Result: (n, n), symmetric.
 
     alpha : (n,)
     beta  : (k,)
     D     : (k,)
-    threshold    : dla n <= threshold uzywa naiwnego mnozenia
-    alpha_sorted : True jesli alpha jest juz posortowane rosnaco
+    threshold    : for n <= threshold the naive product is used
+    alpha_sorted : True if alpha is already sorted ascending
     """
     n = alpha.numel()
     k = beta.numel()
@@ -189,11 +189,11 @@ def Ker_D_KerT(alpha, beta, D, threshold=1024, alpha_sorted=False):
 
 def _Ker_D_KerT_scan(alpha, beta, D, alpha_sorted=False):
     """
-    Scan-based O(n^2 + k log n) konstrukcja macierzy M[i,j] = sum_c D[c] K[i,c] K[j,c].
+    Scan-based O(n^2 + k log n) construction of the matrix M[i,j] = sum_c D[c] K[i,c] K[j,c].
 
-    Idea: dla kazdego beta[c] znajdujemy kubel idx[c] w posortowanym alpha.
-    Wtedy M[i,j] = diff[i,j] * (U[j] + (W[i]-W[j]) + V[i]), gdzie diff, U, V, W
-    pochodza z trzech segment-sumow + prefix/suffix scan na alpha.
+    Idea: for every beta[c] find its bucket idx[c] in the sorted alpha.
+    Then M[i,j] = diff[i,j] * (U[j] + (W[i]-W[j]) + V[i]), where diff, U, V, W
+    come from three segment sums + a prefix/suffix scan over alpha.
     """
     n = alpha.numel()
     k = beta.numel()
@@ -207,10 +207,10 @@ def _Ker_D_KerT_scan(alpha, beta, D, alpha_sorted=False):
         alpha_s, perm = torch.sort(alpha)
         inv_perm = torch.argsort(perm)
 
-    # Kubelek dla kazdego beta[c] w [0, n]
+    # Bucket of every beta[c] in [0, n]
     idx = torch.bucketize(beta, alpha_s, right=True)  # (k,)
 
-    # alpha_ext: sentinele na krancach (zeby idx=0 i idx=n dzialalo)
+    # alpha_ext: sentinels at both ends (so that idx=0 and idx=n work)
     alpha_ext = torch.cat(
         [
             beta.min().unsqueeze(0),
@@ -234,8 +234,8 @@ def _Ker_D_KerT_scan(alpha, beta, D, alpha_sorted=False):
     w = torch.zeros(n + 1, device=device, dtype=dtype).scatter_add(0, idx, D)
 
     # U = prefix(2*alpha_s, u[:n]),  V = suffix(2*alpha_s, v[1:n+1])
-    # Slicy v[1:n+1] maja niezerowy storage offset -> .clone() wymusza
-    # wyrownanie do 16B potrzebne dla float4 loadow w kernelu.
+    # The slice v[1:n+1] has a non-zero storage offset -> .clone() forces
+    # the 16-byte alignment needed by the float4 loads in the kernel.
     alpha2 = 2.0 * alpha_s
     U, V = prefix_suffix_sep(
         alpha2, u[:n].clone().unsqueeze(0), v[1 : n + 1].clone().unsqueeze(0)
@@ -246,14 +246,14 @@ def _Ker_D_KerT_scan(alpha, beta, D, alpha_sorted=False):
     # W = cumsum(w[:n])
     W = torch.cumsum(w[:n], dim=0)
 
-    # Budowa (n, n): diff[i,j] = exp(-relu(alpha_i - alpha_j))
+    # Build (n, n): diff[i,j] = exp(-relu(alpha_i - alpha_j))
     ai = alpha_s.unsqueeze(1)
     aj = alpha_s.unsqueeze(0)
     diff = torch.exp(-torch.relu(ai - aj))
 
     M_raw = diff * (U.unsqueeze(0) + (W.unsqueeze(1) - W.unsqueeze(0)) + V.unsqueeze(1))
 
-    # Symetryzacja: M = tril(M_raw) + tril(M_raw, -1)^T
+    # Symmetrization: M = tril(M_raw) + tril(M_raw, -1)^T
     M = torch.tril(M_raw) + torch.tril(M_raw, -1).T
 
     if inv_perm is not None:
@@ -262,7 +262,7 @@ def _Ker_D_KerT_scan(alpha, beta, D, alpha_sorted=False):
 
 
 # ============================================================
-# Naiwne referencje (do testow)
+# Naive references (for the tests)
 # ============================================================
 def _naive_X_KerLap(X, a, b):
     K = torch.exp(-(a.unsqueeze(1) - b.unsqueeze(0)).abs())
@@ -280,7 +280,7 @@ def _naive_Ker_D_KerT(alpha, beta, D):
 
 
 # ============================================================
-# Testy poprawnosci
+# Correctness tests
 # ============================================================
 def run_correctness_tests():
     device = "cuda"
@@ -471,11 +471,11 @@ def run_gradient_tests():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TESTY POPRAWNOSCI")
+    print("CORRECTNESS TESTS")
     print("=" * 60)
     run_correctness_tests()
 
     print("=" * 60)
-    print("TESTY GRADIENTOW")
+    print("GRADIENT TESTS")
     print("=" * 60)
     run_gradient_tests()

@@ -1,16 +1,16 @@
-"""Dataset helper dla DIV2K High-Resolution.
+"""Dataset helper for DIV2K High-Resolution.
 
 DIV2K (Agustsson & Timofte, CVPR 2017):
-  - 800 obrazow train + 100 val, rozne rozdzielczosci (~2K)
+  - 800 train + 100 val images, various resolutions (~2K)
   - download: http://data.vision.ee.ethz.ch/cvl/DIV2K/
 
-Struktura katalogu:
-    C:\\datasets\\div2k\\
-        DIV2K_train_HR\\  (0001.png ... 0800.png)
-        DIV2K_valid_HR\\  (0801.png ... 0900.png)
+Directory layout ($DIV2K_ROOT, default data/div2k):
+    div2k/
+        DIV2K_train_HR/  (0001.png ... 0800.png)
+        DIV2K_valid_HR/  (0801.png ... 0900.png)
 
-Uzywamy random crop 1024x1024 (train) / center crop 1024x1024 (val),
-zeby n = 1024*1024*3 = 3145728 — identyczne jak MetFaces-1024.
+We use a random 1024x1024 crop (train) / a center 1024x1024 crop (val),
+so that n = 1024*1024*3 = 3145728 — the same as MetFaces-1024.
 """
 from __future__ import annotations
 import os
@@ -52,7 +52,7 @@ class FlatImageFolder(Dataset):
 def make_div2k_datasets(train_transform: Callable,
                         val_transform: Callable,
                         root: Optional[str] = None):
-    """Zwraca (train_ds, val_ds, train_root, val_root)."""
+    """Returns (train_ds, val_ds, train_root, val_root)."""
     if root is None:
         root = _DIV2K_ROOT
     train_root = os.path.join(root, _TRAIN_SUBDIR)

@@ -84,13 +84,12 @@ per GPU architecture. With `pdflatex` (and the `times`/`helvet` fonts) the figur
 are typeset like the paper's (`.pgf` and `.pdf`); without it only an approximate
 `.pdf` and the `.png` preview are written.
 
-`sif.sh` runs a command in the Singularity image the paper's runs used,
-`/shared/sets/singularity/python_image_2026-08-04.sif` (Python 3.14, torch 2.13 +
-CUDA 13.2, nvcc, gcc 13, LaTeX; kernels for sm_75 … sm_120). `LAPLEX_SIF` selects
-another image, e.g. one built from `../environment/laplex.def`. If the image or
-`singularity`/`apptainer` is missing, `sif.sh` runs the command
-in the current environment, so every command below also works without it
-(`LAPLEX_SIF= bash sif.sh ...` forces that).
+`sif.sh` runs a command in the container image named by `LAPLEX_SIF` in `../.env`
+(see [../.env.example](../.env.example)), e.g. one built from `../environment/laplex.def`
+(Python 3.14, torch 2.13 + CUDA 13.2, nvcc, gcc 13, LaTeX; the paper's runs used an image
+with these versions). If `LAPLEX_SIF` is unset or `apptainer`/`singularity` is missing,
+`sif.sh` runs the command in the current environment, so every command below also works
+without an image.
 
 ## Running
 
@@ -113,17 +112,21 @@ Common options of every script: `--stage run|plot|all`, `--min-log/--max-log`
 
 ### Slurm
 
-The sbatch files name the partitions of the cluster the paper's runs used
-(dgxh100, rtx4090_batch, rtx2080, dgxa100); on another cluster pass your own,
-e.g. `sbatch -p <partition> -q <qos> sbatch/h100.sbatch`. Submit from `benchmarks/`.
+The sbatch files request only resources (GPU, CPUs, memory, time). Choose the partition,
+QOS and account of your cluster with `SBATCH_PARTITION`, `SBATCH_QOS` and `SBATCH_ACCOUNT`
+in `../.env` (exported before submitting: `set -a; source ../.env; set +a`), or per job
+with `sbatch -p <partition> -q <qos> ...`. The GPU model of a run is recorded in its results
+(`--tag` defaults to it), so ask for the GPU you want to measure (e.g. `--gres=gpu:h100:1`
+or the partition with that GPU). Submit from `benchmarks/`.
 
 ```bash
 sbatch sbatch/h100.sbatch                     # all figures on one GPU, extra args go to every script
-sbatch sbatch/rtx4090.sbatch                  # rtx4090_batch, QOS batch, excludes c22 (RTX 5090)
-sbatch sbatch/rtx2080ti.sbatch                # szarancza
+sbatch sbatch/rtx4090.sbatch                  # the same on an RTX 4090
+sbatch sbatch/rtx2080ti.sbatch                # the same on an RTX 2080 Ti
 FIGS="fig12_gram" sbatch sbatch/h100.sbatch --max-log 31
 FIGS=fig13_cpu_dense sbatch sbatch/cpu.sbatch --tag CPU-max --max-log 32
 sbatch sbatch/last_interval.sbatch            # ~15 min, IMPLS="lib2026 pure" for a subset
+bash second_order/run.sh                      # App. K (Tabs. 11-14, Fig. 22), one GPU
 ```
 
 ### Up to the largest n (camera-ready runs)

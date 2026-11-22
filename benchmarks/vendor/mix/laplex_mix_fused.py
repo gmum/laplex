@@ -70,8 +70,8 @@ Shapes
 """
 from __future__ import annotations
 
-# NOTE: torch MUST be imported before numpy on Windows (MKL/OpenMP DLL
-# load-order, see project memory) -- and this module never imports numpy.
+# NOTE: on Windows torch must be imported before numpy (MKL/OpenMP DLL load order);
+# this module never imports numpy.
 import os
 import sys
 
@@ -82,39 +82,20 @@ from torch.utils.cpp_extension import load_inline
 
 
 # ---------------------------------------------------------------------------
-# CUDA toolchain.  On this machine there is NO standalone CUDA Toolkit --
-# everything CUDA-side lives in the conda ``ml`` env and CUDA_HOME is set by
-# the launching .bat (run_verify.bat) to %CONDA_PREFIX%\Library.  A legacy
-# standalone path is honoured only if it happens to exist.
+# CUDA toolchain: torch finds the CUDA Toolkit through CUDA_HOME (or nvcc on PATH).
 # ---------------------------------------------------------------------------
-_CUDA_LEGACY = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_LEGACY):
-    os.environ.setdefault("CUDA_HOME", _CUDA_LEGACY)
-    os.environ.setdefault("CUDA_PATH", _CUDA_LEGACY)
-    os.environ["PATH"] = os.path.join(_CUDA_LEGACY, "bin") + ";" + os.environ.get("PATH", "")
-    import torch.utils.cpp_extension as _cext
-    _cext.CUDA_HOME = _CUDA_LEGACY
-
-# Verified working flag set for Windows + PyTorch 2.11 + cu128 (see project
-# memory "Python + CUDA setup"): the 14.39 host compiler + the -DUSE_CUDA /
-# /Zc:preprocessor pair bypass the compiled_autograd.h C2872 parse bug.
 _NVCC_FLAGS = [
     "-O3",
     "--use_fast_math",
     "--allow-unsupported-compiler",
     "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH",
+    # -DUSE_CUDA works around a parse error of nvcc in torch's compiled_autograd.h;
+    # TORCH_CUDA_ARCH_LIST sets the -gencode flags, so no arch flags here.
+    "-DUSE_CUDA",
 ]
 if sys.platform == "win32":
-    _MSVC_1439 = (r"C:\Program Files (x86)\Microsoft Visual Studio\2022"
-                  r"\BuildTools\VC\Tools\MSVC\14.39.33519\bin\Hostx64\x64")
-    if os.path.isdir(_MSVC_1439):
-        _NVCC_FLAGS += ["-ccbin", _MSVC_1439]
-    _NVCC_FLAGS += ["-DUSE_CUDA", "-Xcompiler", "/Zc:preprocessor"]
-else:
-    # Linux (e.g. GMUM cu132 / sm_120): the MSVC-only flags above are skipped;
-    # -DUSE_CUDA is the verified-working extra (TORCH_CUDA_ARCH_LIST injects the
-    # -gencode, so don't add arch flags here).  See project memory gmum-singularity.
-    _NVCC_FLAGS += ["-DUSE_CUDA"]
+    # MSVC: the conformant preprocessor is needed by CCCL's preprocessor.h.
+    _NVCC_FLAGS += ["-Xcompiler", "/Zc:preprocessor"]
 
 
 # ===========================================================================

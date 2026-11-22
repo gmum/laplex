@@ -1,19 +1,18 @@
-"""Build ImageNet10 as a tree of symlinks into the full ImageNet on /shared.
+"""Build ImageNet10 as a tree of symlinks into a full ImageNet (ILSVRC 2012, CLS-LOC).
 
-The team ran the projection experiments with ``--root_dataset`` pointing at a full
-ImageNet (``--root_dataset /media/dane/datasets/ImageNet``); the loader
-``CountSketch_LogisticRegression/imagenet10_dataset.py`` keeps only the ten
-synsets of ``IMAGENET10_SYNSETS`` and expects ``root/{train,val}/<synset>/``.
-The cluster copy has per-synset train folders but a flat val folder, so val is
-rebuilt from ``LOC_val_solution.csv`` (50 images per synset).
+The loader ``CountSketch_LogisticRegression/imagenet10_dataset.py`` keeps only the ten
+synsets of ``IMAGENET10_SYNSETS`` and expects ``root/{train,val}/<synset>/``.  The usual
+ImageNet layout has per-synset train folders but a flat val folder, so val is rebuilt
+from ``LOC_val_solution.csv`` (50 images per synset).
 
-    python3 make_imagenet10.py                 # -> nn_training/data/imagenet10
+    python3 make_imagenet10.py                 # -> $IMNET or nn_training/data/imagenet10
     python3 make_imagenet10.py --out DIR --force
     python3 make_imagenet10.py --all-classes   # all 1000 synsets -> nn_training/data/imagenet
                                                # (classification_heads/: DATA_ROOT, VAL_ROOT=.../val)
 
-Standard library only (runs on the login node). The links point into /shared, so the
-container must bind /shared/sets/datasets (sif.sh does).
+The source paths come from --src / --val-csv or from IMAGENET_ROOT / IMAGENET_VAL_CSV
+(environment or ../.env, see ../.env.example).  Standard library only.  The links point
+into IMAGENET_ROOT, which sif.sh binds into the container.
 """
 from __future__ import annotations
 
@@ -27,9 +26,24 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LOADER = HERE / "CountSketch_LogisticRegression" / "imagenet10_dataset.py"
-DEFAULT_SRC = Path("/shared/sets/datasets/imagenet/CLS-LOC")
-DEFAULT_VAL_CSV = Path("/shared/sets/datasets/ImageNet/LOC_val_solution.csv")
-DEFAULT_OUT = HERE / "data" / "imagenet10"
+
+
+def dotenv(path: Path) -> dict[str, str]:
+    """KEY=value lines of the repository's .env (comments and blank lines skipped)."""
+    out = {}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip().strip("'\"")
+    return out
+
+
+ENV = {**dotenv(HERE.parent / ".env"), **os.environ}
+DEFAULT_SRC = ENV.get("IMAGENET_ROOT")
+DEFAULT_VAL_CSV = ENV.get("IMAGENET_VAL_CSV")
+DEFAULT_OUT = Path(ENV.get("IMNET") or HERE / "data" / "imagenet10")
 DEFAULT_OUT_ALL = HERE / "data" / "imagenet"
 
 
@@ -46,12 +60,16 @@ def loader_synsets() -> list[str]:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--src", type=Path, default=DEFAULT_SRC, help="ImageNet root with train/<synset>/ and flat val/")
-    p.add_argument("--val-csv", type=Path, default=DEFAULT_VAL_CSV, help="LOC_val_solution.csv")
+    p.add_argument("--src", type=Path, default=DEFAULT_SRC,
+                   help="ImageNet root with train/<synset>/ and flat val/ (default: $IMAGENET_ROOT)")
+    p.add_argument("--val-csv", type=Path, default=DEFAULT_VAL_CSV,
+                   help="LOC_val_solution.csv (default: $IMAGENET_VAL_CSV)")
     p.add_argument("--out", type=Path, help=f"default {DEFAULT_OUT}, with --all-classes {DEFAULT_OUT_ALL}")
     p.add_argument("--force", action="store_true", help="remove an existing --out first")
     p.add_argument("--all-classes", action="store_true", help="every synset of --src/train instead of ImageNet10")
     args = p.parse_args()
+    if args.src is None or args.val_csv is None:
+        p.error("set IMAGENET_ROOT and IMAGENET_VAL_CSV in ../.env (or pass --src and --val-csv)")
     if args.out is None:
         args.out = DEFAULT_OUT_ALL if args.all_classes else DEFAULT_OUT
 

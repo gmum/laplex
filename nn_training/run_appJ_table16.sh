@@ -14,6 +14,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
+if [[ -f "$HERE/../.env" ]]; then set -a; source "$HERE/../.env"; set +a; fi   # see ../.env.example
 TV_DATA=${TV_DATA:-data/torchvision}
 IMNET=${IMNET:-data/imagenet10}
 ATT_DIMS=${ATT_DIMS:-"64 128 256"}

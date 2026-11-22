@@ -1,5 +1,5 @@
-# Python packages of the paper's runs, at the versions of the Singularity image they used
-# (/shared/sets/singularity/python_image_2026-08-04.sif), with their dependencies.
+# Python packages of the paper's runs, at the versions of the container image they used,
+# with their dependencies.
 # PyTorch is installed separately because its build depends on the CUDA version:
 # torch==2.13.0, torchvision==0.28.0 (laplex.def: +cu132, environment.yml: +cu126).
 # Needs Python >= 3.12 (scipy 1.18); the image has 3.14.6.

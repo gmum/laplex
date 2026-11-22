@@ -1,8 +1,8 @@
-"""Eksperyment ImageNette-320 dla GaussianKerLapComplexWoodbury.
+"""ImageNette-320 experiment for GaussianKerLapComplexWoodbury.
 
-Dokladny analog `_run_imagenette.py` (160x160), tylko n=320^2*3=307200.
+The same as `_run_imagenette.py` (160x160), only with n=320^2*3=307200.
 
-Uzycie:
+Usage:
     python _run_imagenette320.py --complex --k 1000
 """
 from __future__ import annotations
@@ -76,12 +76,12 @@ def main():
     parser.add_argument("--band-width", type=int, default=None)
     parser.add_argument("--param-multiple", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=64,
-                        help="Dla n=307200 mniejszy batch ze wzgledu na pamiec.")
+                        help="Smaller batch for n=307200 because of memory.")
     parser.add_argument("--epochs", type=int, default=25)
     args = parser.parse_args()
 
     if args.complex and args.dense:
-        parser.error("--complex i --dense wykluczają się.")
+        parser.error("--complex and --dense are mutually exclusive.")
 
     if args.param_multiple is not None:
         args.band_width = auto_band_width(N_IMG, args.k, args.param_multiple)
@@ -224,7 +224,7 @@ def main():
     )
     log(f"saved checkpoint -> {ckpt_path}")
 
-    # Próbki
+    # Samples
     model.eval()
     with torch.no_grad():
         samples = model.sample(10).cpu()

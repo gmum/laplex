@@ -1,21 +1,21 @@
 """Batched scan-based Laplace Gram — CUDA-fused fp64.
 
-Rozszerzenie `ker_D_kerT_scan` o batch: liczone jednocześnie B gramów
+Batched `ker_D_kerT_scan`: computes B Gram matrices at once
     G_b[i, i'] = Σ_c D_b[c] · K[i,c] · K[i',c]
 
-dla B różnych diagonali D_b, przy WSPÓLNYM jądrze K (wspólne α, β, τ).
+for B different diagonals D_b with a SHARED kernel K (shared α, β, τ).
 
-Kluczowa obserwacja: `prefix_suffix_sep` już obsługuje (B, T) batch,
-a α jest współdzielone — więc wystarczy przygotować B wersji u/v/w
-i odpalić JEDEN fused CUDA scan z B batchami zamiast B osobnych wywołań.
+Key observation: `prefix_suffix_sep` already handles a (B, T) batch,
+and α is shared, so it suffices to prepare B versions of u/v/w
+and launch ONE fused CUDA scan with B batches instead of B separate calls.
 
-Koszt: O(B·n + n² + B·n·k) → vs B × O(n² + n·k) w naiwnym podejściu.
-Scan CUDA jest O(n) per batch (B batchy lecą równolegle na GPU),
-a konstrukcja Gram-a O(n²) jest wspólna z perspektywy struktury.
+Cost: O(B·n + n² + B·n·k) vs B × O(n² + n·k) in the naive approach.
+The CUDA scan is O(n) per batch (the B batches run in parallel on the GPU),
+and the O(n²) construction of the Gram matrix shares its structure.
 
-Użycie w multi-component LAPLEX:
-    B = I(I+1)/2  (parami komponentów)
-    D_b = w_i · w_j / s²  dla pary (i,j)
+Use in multi-component LAPLEX:
+    B = I(I+1)/2  (pairs of components)
+    D_b = w_i · w_j / s²  for the pair (i,j)
 """
 from __future__ import annotations
 
@@ -35,14 +35,14 @@ def ker_D_kerT_scan_batch(alpha, beta, D_batch, tau):
 
     Args
     ----
-    alpha : (k,)  — pozycje "kolumn" jądra (β-side w naszej konwencji)
-    beta  : (n,)  — pozycje "wierszy" jądra (α-side)
-    D_batch : (B, n) — B diagonali (np. w_i·w_j/s² dla par komponentów)
-    tau   : scalar lub (1,) — wspólna skala jądra
+    alpha : (k,)  — positions of the kernel "columns" (β side in our convention)
+    beta  : (n,)  — positions of the kernel "rows" (α side)
+    D_batch : (B, n) — B diagonals (e.g. w_i·w_j/s² for pairs of components)
+    tau   : scalar or (1,) — shared kernel scale
 
     Returns
     -------
-    G : (B, k, k) fp64 — B symetrycznych gramów
+    G : (B, k, k) fp64 — B symmetric Gram matrices
     """
     k = alpha.numel()
     n = beta.numel()
@@ -52,28 +52,28 @@ def ker_D_kerT_scan_batch(alpha, beta, D_batch, tau):
     if not torch.is_tensor(tau):
         tau = torch.as_tensor(tau, dtype=torch.float64, device=device)
 
-    # Skalujemy α,β przez τ
-    a = (alpha / tau).to(torch.float64)   # (k,) — "kolumny" Gram-a
-    b = (beta / tau).to(torch.float64)    # (n,) — pozycje danych/diagonali
+    # Scale α, β by τ
+    a = (alpha / tau).to(torch.float64)   # (k,) — Gram "columns"
+    b = (beta / tau).to(torch.float64)    # (n,) — positions of the data / diagonal
     D_f = D_batch.to(torch.float64)       # (B, n)
 
-    # Sort α (kolumny Gram-a)
+    # Sort α (Gram columns)
     a_s, perm = torch.sort(a)
     inv_perm = torch.argsort(perm)
 
-    # Kubełki: do którego przedziału [a_s[i], a_s[i+1]) wpada każde b[c]
+    # Buckets: the interval [a_s[i], a_s[i+1]) that each b[c] falls into
     idx = torch.bucketize(b, a_s, right=True)  # (n,)
 
-    # Extended α z sentinelami
+    # α extended with sentinels
     alpha_ext = torch.cat([
         b.min().unsqueeze(0),
         a_s,
         b.max().unsqueeze(0),
     ])
 
-    # --- Przygotowanie u, v, w (batchowane po B) ---
-    # M2: agresywne `del` po użyciu transient (B, n) fp64 tensorów,
-    # by zwolnić pamięć od razu (efektywne pod gradient checkpointingiem).
+    # --- Prepare u, v, w (batched over B) ---
+    # M2: aggressive `del` of the transient (B, n) fp64 tensors after use,
+    # to free memory immediately (effective under gradient checkpointing).
     idx_exp = idx.unsqueeze(0).expand(B, -1)           # (B, n) — cheap (view)
 
     # u[b, i] = Σ_{c: idx[c]==i} D_b[c] · exp(2·(b[c] - α_{i+1}))
@@ -103,7 +103,7 @@ def ker_D_kerT_scan_batch(alpha, beta, D_batch, tau):
     w.scatter_add_(1, idx_exp, D_f)
     del D_f, idx_exp                                    # free fp64 D copy
 
-    # --- Prefix/Suffix scan (CUDA fused, B batches jednocześnie) ---
+    # --- Prefix/suffix scan (CUDA fused, B batches at once) ---
     alpha2 = 2.0 * a_s                                # (k,) fp64, nondecreasing
     u_in = u[:, :k]                                   # (B, k)
     v_in = v[:, 1:k+1]                                # (B, k)
@@ -114,7 +114,7 @@ def ker_D_kerT_scan_batch(alpha, beta, D_batch, tau):
     W = torch.cumsum(w[:, :k], dim=1)                 # (B, k)
     del w
 
-    # --- Konstrukcja k×k Gram-ów ---
+    # --- Build the k×k Gram matrices ---
     # M_raw[b, i, j] = exp(-|a_s[i] - a_s[j]|) · (U[b,j] + W[b,i] - W[b,j] + V[b,i])
     ai = a_s.unsqueeze(1)                             # (k, 1)
     aj = a_s.unsqueeze(0)                             # (1, k)
@@ -130,17 +130,17 @@ def ker_D_kerT_scan_batch(alpha, beta, D_batch, tau):
     M_raw = diff_exp.unsqueeze(0) * inner             # (B, k, k)
     del inner, diff_exp
 
-    # Symetryzacja: tril + tril(-1)^T
+    # Symmetrization: tril + tril(-1)^T
     M = torch.tril(M_raw) + torch.tril(M_raw, diagonal=-1).transpose(-2, -1)
     del M_raw
 
-    # Un-sort: permutacja kolumn i wierszy
+    # Un-sort: permute columns and rows
     G = M[:, inv_perm][:, :, inv_perm]
 
     return G
 
 
 def ker_D_kerT_scan_single(alpha, beta, D, tau):
-    """Wrapper jednodiagonalny (kompatybilny z oryginalnym `ker_D_kerT_scan`)."""
+    """Single-diagonal wrapper (compatible with the original `ker_D_kerT_scan`)."""
     G = ker_D_kerT_scan_batch(alpha, beta, D.unsqueeze(0), tau)
     return G.squeeze(0)

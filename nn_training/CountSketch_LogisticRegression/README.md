@@ -34,12 +34,11 @@ All experiments are designed for statistical robustness (5 independent runs) and
 
 
 
-Save the loop script as `run_experiments.sh`, make it executable, and run:
+Run all five repetitions of every method:
 ```bash
-chmod +x run_experiments.sh
 bash run_experiments.sh
 ```
-> ⚠️ **Important:** Replace `path_to_ImageNet` inside the script with the actual path to your dataset before running.
+The ImageNet-10 root is `IMNET` in the repository's `.env` (see [../../.env.example](../../.env.example); default `../data/imagenet10`, built by [../make_imagenet10.py](../make_imagenet10.py)); results go to `results/` (`OUT=...` to change).
 
 
 Each script supports full CLI argument parsing and can be run independently:

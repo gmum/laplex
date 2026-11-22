@@ -1,10 +1,10 @@
 """Scan-based Laplace Gram (single-tau) — CUDA-fused fp64.
 
-Używa `prefix_suffix_dl_fp64` z cuda_bench (własny fp64 port DL-scan-a).
-~2× szybsze niż pure-PyTorch fp64 cumsum, ~1.3× wolniejsze od fp32 CUDA,
-ale stabilne numerycznie dla signed-D gram-ów (cos2γ, sin2γ).
+Uses `prefix_suffix_dl_fp64` (our fp64 port of the DL scan).
+~2x faster than a pure-PyTorch fp64 cumsum, ~1.3x slower than fp32 CUDA,
+but numerically stable for Gram matrices with signed D (cos2γ, sin2γ).
 
-Koszt O(n² + n·k) flops; dokładność ~1e-15 (fp64 eps).
+Cost O(n² + n·k) flops; accuracy ~1e-15 (fp64 eps).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def ker_D_kerT_scan(alpha, beta, D, tau):
     """
     G[i, i'] = Σ_c D[c] · K[i, c] · K[i', c],   K[i, c] = exp(-|α_i - β_c|/τ).
 
-    Wszystko liczone w fp64 (CUDA fused scan), zwraca fp64.
+    Everything is computed in fp64 (CUDA fused scan); returns fp64.
     """
     n = alpha.numel()
     device = alpha.device
@@ -31,7 +31,7 @@ def ker_D_kerT_scan(alpha, beta, D, tau):
     if not torch.is_tensor(tau):
         tau = torch.as_tensor(tau, dtype=torch.float64, device=device)
 
-    # Skalujemy α,β przez τ: K(α,β;τ) = K(α/τ, β/τ; 1).  Pracujemy w fp64.
+    # Scale α, β by τ: K(α,β;τ) = K(α/τ, β/τ; 1).  Work in fp64.
     a = (alpha / tau).to(torch.float64)
     b = (beta / tau).to(torch.float64)
     D_f = D.to(torch.float64)
@@ -40,10 +40,10 @@ def ker_D_kerT_scan(alpha, beta, D, tau):
     a_s, perm = torch.sort(a)
     inv_perm = torch.argsort(perm)
 
-    # Kubełek dla β[c]
+    # Bucket of β[c]
     idx = torch.bucketize(b, a_s, right=True)
 
-    # α-extended z sentinelami
+    # α extended with sentinels
     alpha_ext = torch.cat([
         b.min().unsqueeze(0),
         a_s,
@@ -64,9 +64,9 @@ def ker_D_kerT_scan(alpha, beta, D, tau):
     # w[i] = Σ_{c: idx[c]==i} D[c]
     w = torch.zeros(n + 1, dtype=torch.float64, device=device).scatter_add(0, idx, D_f)
 
-    # Prefix/Suffix przez fused CUDA DL-scan (fp64).
+    # Prefix/suffix with the fused CUDA DL scan (fp64).
     # Scan kernel computes:  P[i] = exp(-α_s[i]) · Σ_{j≤i} exp(α_s[j]) · u[j]
-    # Uwaga: scan oczekuje (B, T).  Używamy B=1.
+    # Note: the scan expects (B, T).  We use B=1.
     alpha2 = 2.0 * a_s                                         # (n,) fp64, nondecreasing
     u_1d = u[:n].unsqueeze(0)                                  # (1, n)
     v_1d = v[1:n+1].unsqueeze(0)                               # (1, n)
@@ -84,8 +84,8 @@ def ker_D_kerT_scan(alpha, beta, D, tau):
 
     M_raw = diff * (U.unsqueeze(0) + (W.unsqueeze(1) - W.unsqueeze(0)) + V.unsqueeze(1))
 
-    # Symetryzacja tril + tril(-1)^T
+    # Symmetrization tril + tril(-1)^T
     M = torch.tril(M_raw) + torch.tril(M_raw, -1).T
 
-    # Un-sort (fp64 zachowany)
+    # Un-sort (fp64 kept)
     return M[inv_perm][:, inv_perm]

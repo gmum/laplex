@@ -1,12 +1,12 @@
 """
 kerlap_fused.py
 
-Wersja X_KerLap z fuzją kerneli CUDA:
+X_KerLap with fused CUDA kernels:
   1) fused_precompute: 7 PyTorch ops -> 1 kernel
   2) fused_gather_interp: ~20 PyTorch ops (searchsorted+clamp+exp+gather+sum) -> 1 kernel
   3) fused_scatter: ~20 PyTorch ops (searchsorted+scatter_add) -> 1 kernel
 
-Scan DL (prefix_suffix) pozostaje bez zmian.
+The DL scan (prefix_suffix) is unchanged.
 """
 
 import os, sys, time, gc
@@ -17,20 +17,6 @@ from torch.utils.cpp_extension import load_inline
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prefix_suffix_dl import _ps_raw, _precompute, _PAD_TO
 from prefix_suffix_dl import prefix_suffix as _prefix_suffix_sum
-
-# ============================================================
-# CUDA 12.1
-# ============================================================
-_CUDA_121 = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_121):
-    os.environ["CUDA_HOME"] = _CUDA_121
-    os.environ["CUDA_PATH"] = _CUDA_121
-    os.environ["PATH"] = (
-        os.path.join(_CUDA_121, "bin") + ";" + os.environ.get("PATH", "")
-    )
-    import torch.utils.cpp_extension as _cext
-
-    _cext.CUDA_HOME = _CUDA_121
 
 _NVCC_FLAGS = [
     "-O3",
@@ -492,7 +478,7 @@ print("OK")
 # Autograd wrappers
 # ============================================================
 class _PrefSuffFusedFn(Function):
-    """prefix_suffix_sep z fused_precompute (1 kernel zamiast 7)."""
+    """prefix_suffix_sep with fused_precompute (1 kernel instead of 7)."""
 
     @staticmethod
     def forward(ctx, alpha, u, v):
@@ -623,10 +609,10 @@ def _xAT_fused(X, a, b_s):
 
 def X_KerLap_fused(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
     """
-    X @ K(a,b) z fuzja kerneli CUDA.
+    X @ K(a,b) with fused CUDA kernels.
 
-    Identyczny interfejs jak X_KerLap, ale ~20 kernel launches
-    zamienione na 1 w fazie gather/scatter.
+    Same interface as X_KerLap, but ~20 kernel launches
+    are replaced by 1 in the gather/scatter phase.
     """
     squeeze = X.dim() == 1
     if squeeze:
@@ -662,11 +648,11 @@ def X_KerLap_fused(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
 # ============================================================
 def KerLap_X_fused(X, a, b, threshold=1024, a_sorted=False, b_sorted=False):
     """
-    K(a,b) @ X z fuzja kerneli CUDA.
-    X : (k, C) lub (k,)
+    K(a,b) @ X with fused CUDA kernels.
+    X : (k, C) or (k,)
     a : (n,)
     b : (k,)
-    zwraca : (n, C) lub (n,)
+    returns : (n, C) or (n,)
     """
     result = X_KerLap_fused(
         X.T.contiguous(), b, a, threshold, a_sorted=b_sorted, b_sorted=a_sorted
@@ -694,11 +680,11 @@ def _prefix_suffix_sep_fused(alpha, u, v=None):
 
 def Ker_D_KerT_fused(alpha, beta, D, threshold=1024, alpha_sorted=False):
     """
-    K(alpha,beta) @ diag(D) @ K(alpha,beta)^T z fuzja kerneli CUDA.
+    K(alpha,beta) @ diag(D) @ K(alpha,beta)^T with fused CUDA kernels.
     alpha : (n,)
     beta  : (k,)
     D     : (k,)
-    zwraca : (n, n)
+    returns : (n, n)
     """
     n = alpha.numel()
     k = beta.numel()
@@ -747,7 +733,7 @@ def _Ker_D_KerT_scan_fused(alpha, beta, D, alpha_sorted=False):
     w = torch.zeros(n + 1, device=device, dtype=dtype).scatter_add(0, idx, D)
 
     alpha2 = 2.0 * alpha_s
-    # Fused prefix_suffix_sep (fused precompute zamiast 7 PyTorch ops)
+    # Fused prefix_suffix_sep (fused precompute instead of 7 PyTorch ops)
     U, V = _prefix_suffix_sep_fused(
         alpha2, u[:n].unsqueeze(0), v[1 : n + 1].unsqueeze(0)
     )
@@ -756,7 +742,7 @@ def _Ker_D_KerT_scan_fused(alpha, beta, D, alpha_sorted=False):
 
     W = torch.cumsum(w[:n], dim=0)
 
-    # Fused matrix build (1 kernel zamiast ~6 PyTorch ops)
+    # Fused matrix build (1 kernel instead of ~6 PyTorch ops)
     M = _FusedBuildMFn.apply(alpha_s, U, V, W)
 
     if inv_perm is not None:
@@ -982,7 +968,7 @@ def bench_fb(fn_create, warmup=10, iters=50):
 def _plot_comparison(
     axes_or_ax, title, logTs, orig_vals, fused_vals, ylabel="Time (ms)"
 ):
-    """Helper: rysuje orig vs fused na jednym ax."""
+    """Helper: plots original vs fused on one axis."""
     import numpy as np
 
     ax = axes_or_ax
@@ -1139,7 +1125,7 @@ def run_benchmarks():
 
         for logT in logTs:
             n, k = nk_fn(logT)
-            C = B  # kolumny X
+            C = B  # columns of X
             print(f"  n={n}, k={k}")
 
             a = torch.sort(torch.randn(n, device=device))[0]
@@ -1287,7 +1273,7 @@ def run_benchmarks():
 if __name__ == "__main__":
     run_tests()
     print("=" * 60)
-    print("BENCHMARKI: Original vs Fused")
+    print("BENCHMARKS: Original vs Fused")
     print("=" * 60)
     run_benchmarks()
     print("\nDone!")

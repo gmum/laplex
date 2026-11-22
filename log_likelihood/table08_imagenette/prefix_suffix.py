@@ -2,26 +2,26 @@
 prefix_suffix.py
 ================
 
-Rozszerzenie prefix_suffix_dl.py o WYMIAR L (multi-alpha).
+prefix_suffix_dl.py extended with a DIMENSION L (multi-alpha).
 
-Dla kazdego l = 0..L-1 obliczamy niezaleznie:
+For every l = 0..L-1 we compute independently:
     prefix(alpha[l], u[l])[b, i] = exp(-alpha[l,i]) * sum_{j<=i} exp(alpha[l,j]) * u[l,b,j]
     suffix(alpha[l], v[l])[b, i] = exp(+alpha[l,i]) * sum_{j>=i} exp(-alpha[l,j]) * v[l,b,j]
 
-Wszystko w JEDNYM wywolaniu kernela. Grid: (L*B, tiles) — decoupled
-lookback dziala per-batch (batch = l_idx*B + b), wiec roznic l nie
-mieszamy. Stany state_* sa indeksowane przez sid = batch*num_tiles+tile,
-per-batch offset = batch*num_tiles; mechanism identyczny jak w oryginale.
+Everything in ONE kernel launch. Grid: (L*B, tiles) — the decoupled
+lookback works per batch (batch = l_idx*B + b), so different l are never
+mixed. The state_* buffers are indexed by sid = batch*num_tiles+tile,
+per-batch offset = batch*num_tiles; the mechanism is the same as in the original.
 
-API jest analogiczne do prefix_suffix_dl.py:
+The API mirrors prefix_suffix_dl.py:
     prefix_suffix_multi(alpha, u, v)    -> (L, B, T)
     prefix_suffix_sep_multi(alpha, u, v) -> (P: (L,B,T), S: (L,B,T))
 
-gdzie:
-    alpha : (L, T)     niemalejace po osi T
+where:
+    alpha : (L, T)     non-decreasing along T
     u, v  : (L, B, T)
 
-UWAGA: ten plik KOMPILUJE extension CUDA (prefix_suffix_ext).
+NOTE: this file COMPILES a CUDA extension (prefix_suffix_ext).
 """
 
 import os, math
@@ -31,15 +31,6 @@ from torch.utils.cpp_extension import load_inline
 
 _LOG2E = math.log2(math.e)
 
-# CUDA 12.1 (Windows): zgadza sie z prefix_suffix_dl.py
-_CUDA_121 = r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1"
-if os.path.isdir(_CUDA_121):
-    os.environ["CUDA_HOME"] = _CUDA_121
-    os.environ["CUDA_PATH"] = _CUDA_121
-    os.environ["PATH"] = os.path.join(_CUDA_121, "bin") + ";" + os.environ.get("PATH", "")
-    import torch.utils.cpp_extension as _cext
-    _cext.CUDA_HOME = _CUDA_121
-
 _NVCC_FLAGS = [
     "-O3", "--use_fast_math",
     "--allow-unsupported-compiler",
@@ -47,7 +38,7 @@ _NVCC_FLAGS = [
 ]
 
 # ============================================================
-# CUDA source — kopia oryginalu z dodatkowym wymiarem L
+# CUDA source — copy of the original with an extra dimension L
 # ============================================================
 _CUDA_SRC = r"""
 #include <ATen/ATen.h>
@@ -167,7 +158,7 @@ __global__ void dl_scan_fwd_fused_multi(
     *((float4*)(oy_b+base))=yy;
 }
 
-// Multi-alpha BACKWARD scan (prawa->lewa).
+// Multi-alpha BACKWARD scan (right -> left).
 __global__ void dl_scan_bwd_fused_multi(
     const int*   __restrict__ n,
     const float* __restrict__ x,
@@ -258,7 +249,7 @@ __global__ void dl_scan_bwd_fused_multi(
 
 // Launcher.
 //   n_fwd  : [L, T]   ef_fwd : [L, T]   x_fwd : [L, B, T]
-//   n_bwd, ef_bwd, x_bwd analogicznie.
+//   n_bwd, ef_bwd, x_bwd likewise.
 std::vector<at::Tensor> scan_ps_fused_multi(
     at::Tensor n_fwd, at::Tensor ef_fwd, at::Tensor x_fwd,
     at::Tensor n_bwd, at::Tensor ef_bwd, at::Tensor x_bwd)
@@ -300,7 +291,7 @@ std::vector<at::Tensor> scan_ps_fused_multi(
     return {out_fwd, out_bwd};
 }
 
-// Fused redukcja grad_alpha po osi B dla multi.
+// Fused reduction of grad_alpha over the B axis (multi).
 //   in:  u, sgp, v, pgs, gp, P, gs, S :  [L, B, T]
 //   out: [L, T]
 //   out[l, t] = sum_b { u*sgp - v*pgs - gp*P + gs*S }[l, b, t]
@@ -346,9 +337,9 @@ at::Tensor grad_alpha_reduce_multi(
     return out;
 }
 
-// Two-tau fused grad_alpha redukcja.  Wykonuje OBIE redukcje (grad_aL i
-// grad_aR) w jednym kernelu, czytajac kazdy z 8 tensorow wejsciowych
-// tylko raz.
+// Two-tau fused grad_alpha reduction.  Performs BOTH reductions (grad_aL and
+// grad_aR) in one kernel, reading each of the 8 input tensors
+// only once.
 //   in:  u, sgp, gp, P, v, pgs, gs, S : [L, B, T]
 //   out: outL, outR : [L, T]
 //   outL[l,t] = sum_b { u*sgp - gp*P     }[l, b, t]
@@ -431,8 +422,8 @@ _PAD_TO  = _THREADS * 4  # 1024
 
 def _precompute_multi(alpha: torch.Tensor):
     """
-    alpha : (L, T) niemalejace po dim=1
-    Zwraca: ef (L,T), n_fwd (L,T), ef_neg (L,T), n_bwd (L,T).
+    alpha : (L, T) non-decreasing along dim=1
+    Returns: ef (L,T), n_fwd (L,T), ef_neg (L,T), n_bwd (L,T).
     """
     ap  =  alpha.float() * _LOG2E
     n_f = ap.floor().to(torch.int32)
@@ -445,7 +436,7 @@ def _precompute_multi(alpha: torch.Tensor):
 
 
 def _pad_last_2d(n1d_LT: torch.Tensor, T: int):
-    """Pad (L,T) -> (L, T_pad) gdzie T_pad = ceil(T/1024)*1024. Replikuje ostatnia kolumne."""
+    """Pad (L,T) -> (L, T_pad) with T_pad = ceil(T/1024)*1024. Repeats the last column."""
     rem = T % _PAD_TO
     if rem == 0:
         return n1d_LT, T
@@ -467,7 +458,7 @@ def _ps_raw_multi(ef, n_fwd, ef_neg, n_bwd, u: torch.Tensor, v: torch.Tensor):
     """
     ef, n_fwd, ef_neg, n_bwd : (L, T)
     u, v                     : (L, B, T)
-    Zwraca: prefix (L,B,T), suffix (L,B,T) — nieobciete do T_orig, wlasciwe wartosci na [..., :T].
+    Returns: prefix (L,B,T), suffix (L,B,T) — not cut to T_orig, the valid values are [..., :T].
     """
     L, B, T = u.shape
     u_pad, T_orig   = _pad_last_3d(u,     T)
@@ -489,10 +480,10 @@ def _ps_raw_multi(ef, n_fwd, ef_neg, n_bwd, u: torch.Tensor, v: torch.Tensor):
 # ============================================================
 class _PrefSuffDiffMultiFn(Function):
     """
-    (prefix(alpha_l, u_l), suffix(alpha_l, v_l)) dla kazdego l rownolegle.
+    (prefix(alpha_l, u_l), suffix(alpha_l, v_l)) for every l in parallel.
 
     Forward:  alpha (L,T); u,v (L,B,T)  ->  P,S (L,B,T)
-    Backward: analogicznie do _PrefSuffDiffFn, suma po B przez fused kernel.
+    Backward: as in _PrefSuffDiffFn, with the sum over B in a fused kernel.
     """
 
     @staticmethod
@@ -531,11 +522,11 @@ class _PrefSuffDiffMultiFn(Function):
 
 def prefix_suffix_sep_multi(alpha: torch.Tensor, u: torch.Tensor, v: torch.Tensor = None):
     """
-    Zwraca (prefix, suffix) dla kazdego l rownolegle.
+    Returns (prefix, suffix) for every l in parallel.
 
-    alpha : (L, T)   niemalejace po T
-    u, v  : (L, B, T)   (jesli v is None, v = u)
-    zwraca: (P, S) oba (L, B, T)
+    alpha : (L, T)   non-decreasing along T
+    u, v  : (L, B, T)   (if v is None, v = u)
+    returns: (P, S), both (L, B, T)
     """
     if v is None:
         v = u
@@ -543,7 +534,7 @@ def prefix_suffix_sep_multi(alpha: torch.Tensor, u: torch.Tensor, v: torch.Tenso
 
 
 # ============================================================
-# Naiwna referencja
+# Naive reference
 # ============================================================
 def _naive_prefix_multi(alpha, u):
     # alpha (L,T), u (L,B,T)

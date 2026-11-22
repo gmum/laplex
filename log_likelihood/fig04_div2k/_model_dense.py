@@ -1,19 +1,19 @@
 """Dense low-rank Woodbury baseline (prob-PCA-like).
 
-Analog do `GaussianKerLapWoodbury`, ale pierwsza macierz redukująca wymiar
-jest po prostu gęsta (dense), **bez** struktury jądra Laplace.
+Analogous to `GaussianKerLapWoodbury`, but the first, dimension-reducing matrix
+is simply dense, **without** the Laplace-kernel structure.
 
 Model:
-    B   = W · L^T,  W ∈ ℝ^{n × k_dense}  (dense), L dolnotrójkątna k_d×k_d
+    B   = W · L^T,  W ∈ ℝ^{n × k_dense}  (dense), L lower-triangular k_d×k_d
     Σ   = diag(s²) + B Bᵀ
     N(m, Σ)
 
-Użycie:  Woodbury i Cholesky identyczne jak w modelu kernelowym,
-tylko `B^T · diag(w²/s²) · B` liczymy JAWNIE (bez LAPLEX):
+Use:  Woodbury and Cholesky as in the kernel model,
+only `B^T · diag(w²/s²) · B` is computed EXPLICITLY (no LAPLEX):
     G = Lᵀ · Wᵀ · diag(1/s²) · W · L
-(w modelu dense pomijamy dodatkowe `w` — W je już subsumuje).
+(the dense model has no extra `w` — W already subsumes it).
 
-Liczba efektywnych parametrów:
+Number of effective parameters:
     2n + n·k_d + k_d(k_d+1)/2
 """
 from __future__ import annotations
@@ -95,12 +95,12 @@ class GaussianDenseLowRank:
 
 
 class GaussianDenseLowRankWoodbury(nn.Module):
-    """Trenowalny dense low-rank.
+    """Trainable dense low-rank model.
 
     Args
     ----
-    n        : wymiar danych
-    k_dense  : wymiar ukryty (rank B = k_dense)
+    n        : data dimension
+    k_dense  : latent dimension (rank B = k_dense)
     """
 
     def __init__(self, n, k_dense, eps=1e-4, single_tau=True, mean_init=None):
@@ -108,8 +108,8 @@ class GaussianDenseLowRankWoodbury(nn.Module):
         self.n = n
         self.k_dense = k_dense
         self.eps = eps
-        # `single_tau` jest ignorowany — dense analog nie ma τ.  Akceptujemy
-        # flagę tylko dla jednolitości sygnatury z ModelClass w runnerze.
+        # `single_tau` is ignored — the dense model has no τ.  The flag is accepted
+        # only for a signature uniform with the ModelClass of the runner.
         self.single_tau = single_tau
 
         if mean_init is not None:
@@ -118,11 +118,11 @@ class GaussianDenseLowRankWoodbury(nn.Module):
             self.m = nn.Parameter(torch.zeros(n))
         self.s_raw = nn.Parameter(torch.zeros(n))
 
-        # W: dense low-rank factor  (He-ish init dopasowany do rzędu 0.01 jak w
-        # kernel-modelu, gdzie sumaryczny wpływ w @ K @ A był podobnej wielkości)
+        # W: dense low-rank factor  (He-like init of order 0.01, as in
+        # the kernel model, where the total effect of w @ K @ A was of similar size)
         self.W = nn.Parameter(torch.randn(n, k_dense) * 0.01)
 
-        # A_lat: lower-tri z dodatnią przekątną (analog kernelowego modelu)
+        # A_lat: lower-triangular with a positive diagonal (as in the kernel model)
         self.A_off = nn.Parameter(torch.randn(k_dense, k_dense) * 0.01)
         self.A_diag_raw = nn.Parameter(torch.full((k_dense,), -4.6))
 
@@ -145,7 +145,7 @@ class GaussianDenseLowRankWoodbury(nn.Module):
     def sample(self, num_samples):
         return self.to_functional().sample(num_samples)
 
-    # Placeholdery dla uniformowości — runner używa tau_L/tau_R dla kernel-modeli.
+    # Placeholders for uniformity — the runner uses tau_L/tau_R of the kernel models.
     def tau_L(self):
         return torch.tensor(float("nan"))
 
