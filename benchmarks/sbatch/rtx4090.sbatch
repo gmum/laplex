@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH --job-name=laplex-repro-4090
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=1-00:00:00
+#SBATCH --output=logs/slurm-%x-%j.out
+#SBATCH --error=logs/slurm-%x-%j.out
+#
+# All benchmark figures on one RTX 4090 (24 GB).
+# Partition / QOS / account: set SBATCH_PARTITION, SBATCH_QOS, SBATCH_ACCOUNT in ../.env and export
+# them before submitting (set -a; source ../.env; set +a), or pass sbatch -p <partition> -q <qos>.
+# Submit from benchmarks/:   sbatch sbatch/rtx4090.sbatch [args for every script]
+set -uo pipefail
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+[[ -f run_all.sh ]] || cd benchmarks
+exec bash run_all.sh "$@"

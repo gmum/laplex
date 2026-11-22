@@ -1,0 +1,35 @@
+# Python packages of the paper's runs, at the versions of the container image they used,
+# with their dependencies.
+# PyTorch is installed separately because its build depends on the CUDA version:
+# torch==2.13.0, torchvision==0.28.0 (laplex.def: +cu132, environment.yml: +cu126).
+# Needs Python >= 3.12 (scipy 1.18); the image has 3.14.6.
+contourpy==1.3.3
+cycler==0.12.1
+filelock==3.29.0
+fonttools==4.63.0
+fsspec==2026.4.0
+jinja2==3.1.6
+joblib==1.5.3
+kiwisolver==1.5.0
+markupsafe==3.0.3
+matplotlib==3.11.1
+mpmath==1.3.0
+narwhals==2.24.0
+networkx==3.6.1
+ninja==1.13.0
+numpy==2.4.4
+packaging==26.2
+pandas==2.3.3
+pillow==12.2.0
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+pytz==2026.3.post1
+scikit-learn==1.9.0
+scipy==1.18.0
+setuptools==78.1.0
+six==1.17.0
+sympy==1.14.0
+threadpoolctl==3.6.0
+tqdm==4.70.0
+typing-extensions==4.15.0
+tzdata==2026.3

@@ -1,0 +1,24 @@
+# Conda environment with the package versions of the paper's runs (requirements.txt, as in
+# laplex.def), but PyTorch built for CUDA 12.6, which needs an NVIDIA driver >= 525 instead
+# of >= 580.  From the repository root:
+#
+#   conda env create -f environment/environment.yml
+#   conda activate laplex
+#
+# RTX 50xx (sm_120) needs a CUDA 13 build: change cu126 to cu130 below and cuda-nvcc to 13.0
+# (driver >= 580).  LaTeX is not included; see the README.
+name: laplex
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14.6
+  - pip
+  # nvcc and a host compiler for the CUDA kernels of benchmarks/, compiled on first import
+  - cuda-nvcc=12.6
+  - cuda-cudart-dev=12.6
+  - gxx_linux-64=13
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.13.0+cu126
+      - torchvision==0.28.0+cu126
+      - -r requirements.txt
