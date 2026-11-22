@@ -5,6 +5,7 @@
 Łukasz Struski, Hanna Blazhko, Piotr Kubaty, Jacek Tabor
 
 [![arXiv](https://img.shields.io/badge/arXiv-2605.24584-b31b1b.svg)](https://arxiv.org/abs/2605.24584)
+[![NeurIPS 2026 poster](https://img.shields.io/badge/NeurIPS_2026-poster_page-68448c.svg)](https://neurips.cc/virtual/2026/loc/sydney/poster/155528)
 
 This repository contains the official implementation of **"LAPLEX: The FFT of Learnable Laplace Kernels"**, published at the *Conference on Neural Information Processing Systems (NeurIPS) 2026*.
 

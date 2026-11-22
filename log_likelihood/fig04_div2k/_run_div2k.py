@@ -68,11 +68,11 @@ def main():
     use_complex = args.complex
 
     if args.dense:
-        suffix = f"1024_dense_kd{args.k_dense}"
+        suffix = f"1024_dense_kd{args.k_dense}_b{args.batch_size}"
     else:
         kernel  = "complex" if use_complex else "real"
         tau_str = "1tau" if single_tau else "2tau"
-        suffix  = f"1024_{kernel}_{tau_str}_k{K_LATENT}"
+        suffix  = f"1024_{kernel}_{tau_str}_k{K_LATENT}_b{args.batch_size}"
     tag = "div2k"
 
     torch.set_default_dtype(torch.float32)
